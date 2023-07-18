@@ -1,0 +1,3 @@
+C:/Users/14476/Github Resporites/CG-resit/RedNoise/out/build/x64-Debug/CMakeFiles/RedNoise.dir
+C:/Users/14476/Github Resporites/CG-resit/RedNoise/out/build/x64-Debug/CMakeFiles/edit_cache.dir
+C:/Users/14476/Github Resporites/CG-resit/RedNoise/out/build/x64-Debug/CMakeFiles/rebuild_cache.dir
