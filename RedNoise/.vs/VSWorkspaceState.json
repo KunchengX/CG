@@ -1,8 +1,10 @@
 {
   "ExpandedNodes": [
     "",
-    "\\src"
+    "\\libs",
+    "\\libs\\glm-0.9.7.2",
+    "\\libs\\sdw"
   ],
-  "SelectedNode": "\\src\\RedNoise.cpp",
+  "SelectedNode": "\\texture.ppm",
   "PreviewInSolutionExplorer": false
 }
