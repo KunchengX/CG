@@ -1,11 +1,8 @@
 {
   "ExpandedNodes": [
     "",
-    "\\libs",
-    "\\libs\\glm-0.9.7.2",
-    "\\libs\\sdw",
-    "\\src"
+    "\\out\\build"
   ],
-  "SelectedNode": "\\libs\\sdw\\CanvasPoint.cpp",
+  "SelectedNode": "\\out",
   "PreviewInSolutionExplorer": false
 }

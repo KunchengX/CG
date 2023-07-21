@@ -10,6 +10,9 @@
 #include <RayTriangleIntersection.h>
 #include <TextureMap.h>
 #include <TexturePoint.h>
+#include <iostream>
+#include <string>
+#include <sstream>
 
 #define WIDTH 320
 #define HEIGHT 240
@@ -25,6 +28,12 @@ void draw(DrawingWindow& window) {
 			window.setPixelColour(x, y, colour);
 		}
 	}
+}
+
+int judge(float number) {
+	if (number < 0) return -1; // bottom-to-top
+	else if (number == 0) return 0;
+	else return 1; // top-to-bottom
 }
 
 std::vector<float> interpolateSingleFloats(float from, float to, size_t numberOfValue) {
@@ -204,174 +213,80 @@ void drawFilledTriangle(DrawingWindow& window, CanvasTriangle triangle, Colour c
 
 	// Draw the white stroked triangle over the filled triangle
 	Colour white(255, 255, 255);
-	drawLine(window, triangle[0], triangle[1], white);
-	drawLine(window, triangle[1], triangle[2], white);
-	drawLine(window, triangle[2], triangle[0], white);
+	drawTriangle(window, triangle, white);
 }
 
-void drawTextureTriangle(DrawingWindow& window, CanvasTriangle triangle, Colour color, TextureMap& texture) {
+TextureMap getTextureMap(const std::string& image) {
+	TextureMap textureMap = TextureMap(image);
+	std::cout << "width " << textureMap.width << "height " << textureMap.height << std::endl;
+	return textureMap;
+}
+
+// Function to perform texture mapping using barycentric coordinates
+uint32_t textureMapper(TextureMap textureMap, CanvasTriangle triangle, CanvasPoint point) {
+	// Calculate barycentric coordinates (u, v, w) for the given point inside the triangle
+	float u = (-(point.x - triangle.v1().x) * (triangle.v2().y - triangle.v1().y) + (point.y - triangle.v1().y) * (triangle.v2().x - triangle.v1().x)) / (-(triangle.v0().x - triangle.v1().x) * (triangle.v2().y - triangle.v1().y) + (triangle.v0().y - triangle.v1().y) * (triangle.v2().x - triangle.v1().x));
+	float v = (-(point.x - triangle.v2().x) * (triangle.v0().y - triangle.v2().y) + (point.y - triangle.v2().y) * (triangle.v0().x - triangle.v2().x)) / (-(triangle.v1().x - triangle.v2().x) * (triangle.v0().y - triangle.v2().y) + (triangle.v1().y - triangle.v2().y) * (triangle.v0().x - triangle.v2().x));
+	float w = 1 - u - v;
+	
+	// Calculate the texture coordinate for the given point using barycentric interpolation
+	CanvasPoint texturePoint((u * triangle.v0().texturePoint.x + v * triangle.v1().texturePoint.x + w * triangle.v2().texturePoint.x), (u * triangle.v0().texturePoint.y + v * triangle.v1().texturePoint.y + w * triangle.v2().texturePoint.y));
+	
+	// Calculate the index in the texture map array corresponding to the texture coordinate
+	int index = int(texturePoint.y) * textureMap.width + int(texturePoint.x);
+
+	// Retrieve the color of the texture from the texture map using the calculated index
+	uint32_t colour = textureMap.pixels[index - 1];	// The index starts from 1
+	return colour;
+}
+
+// fill a triangle with texture map
+void textureTriangle(DrawingWindow& window, const TextureMap& textureMap, CanvasTriangle triangle, CanvasPoint v1, CanvasPoint v2, CanvasPoint v3) {
+	CanvasPoint newV1 = v1;
+	CanvasPoint newV2 = v1;
+	for (int i = 1; i <= fabs(v2.y - v1.y); i++) {
+		float f = i / fabs(v2.y - v1.y);
+		newV1.x = v1.x + (v2.x - v1.x) * f;
+		newV1.y -= judge(v1.y - v3.y);
+		newV2.x = v1.x + (v3.x - v1.x) * f;
+		newV2.y -= judge(v1.y - v3.y);
+		for (float j = 0.0; j < (newV2.x - newV1.x); j++) {
+			float x = newV1.x + j;
+			float y = newV1.y;
+			uint32_t colour = textureMapper(textureMap, triangle, CanvasPoint(x, y));
+			window.setPixelColour(x, y, colour);
+		}
+	}
+}
+
+void drawTextureTriangle(DrawingWindow& window, const TextureMap& textureMap, CanvasTriangle triangle) {
+	// draw white stroked triangle
+	drawTriangle(window, triangle, Colour(255, 255, 255));
+
 	// Sort vertices based on their y-coordinate (top to bottom)
 	if (triangle[1].y < triangle[0].y) std::swap(triangle[0], triangle[1]);
 	if (triangle[2].y < triangle[0].y) std::swap(triangle[0], triangle[2]);
 	if (triangle[2].y < triangle[1].y) std::swap(triangle[1], triangle[2]);
 
-	// Calculate the texture coordinates for each vertex
-	glm::vec2 texCoord1 = triangle[0].texturePoint.coordinates;
-	glm::vec2 texCoord2 = triangle[1].texturePoint.coordinates;
-	glm::vec2 texCoord3 = triangle[2].texturePoint.coordinates;
+	CanvasPoint top = triangle[0];
+	CanvasPoint mid = triangle[1];
+	CanvasPoint bot = triangle[2];
 
-	// Interpolate texture coordinates along the edges
-	std::vector<glm::vec2> leftColumnTexCoords = interpolateThreeElementValues(texCoord1, texCoord3, triangle[0].y - triangle[2].y + 1);
-	std::vector<glm::vec2> rightColumnTexCoords = interpolateThreeElementValues(texCoord1, texCoord2, triangle[0].y - triangle[1].y + 1);
-
-	// Loop through each row in the triangle
-	for (int y = triangle[0].y; y >= triangle[2].y; y--) {
-		// Get the interpolated texture coordinates for this row
-		glm::vec2 texCoordLeft = leftColumnTexCoords[triangle[0].y - y];
-		glm::vec2 texCoordRight = rightColumnTexCoords[triangle[0].y - y];
-
-		// Interpolate texture coordinates along the row
-		std::vector<glm::vec2> rowTexCoords = interpolateThreeElementValues(texCoordLeft, texCoordRight, triangle[1].x - triangle[0].x + 1);
-
-		// Loop through each pixel in the row
-		for (int x = triangle[0].x; x <= triangle[1].x; x++) {
-			// Get the interpolated texture coordinates for this pixel
-			glm::vec2 texCoord = rowTexCoords[x - triangle[0].x];
-
-			// Calculate the texture map pixel index values (convert floating-point texture coordinates to integers)
-			int texMapX = static_cast<int>(texCoord.x * (texture.width - 1));
-			int texMapY = static_cast<int>(texCoord.y * (texture.height - 1));
-
-			// Calculate the index of the pixel in the texture map vector
-			int texMapIndex = texMapY * texture.width + texMapX;
-
-			// Get the color from the texture map for this pixel
-			uint32_t texColor = texture.pixels[texMapIndex];
-
-			// Set the pixel's color in the window
-			window.setPixelColour(x, y, texColor);
-		}
+	CanvasPoint extra;
+	double R = (bot.x - top.x) / (bot.y - top.y);
+	float EX;
+	if (R >= 0) {
+		EX = top.x + ((mid.y - top.y) * fabs(R));
 	}
-
-	// Draw the white stroked triangle over the filled triangle
-	Colour white(255, 255, 255);
-	drawLine(window, triangle[0], triangle[1], white);
-	drawLine(window, triangle[1], triangle[2], white);
-	drawLine(window, triangle[2], triangle[0], white);
-}
-
-#include <iostream>
-#include <SDL2/SDL.h>
-#include <CanvasPoint.h>
-#include <DrawingWindow.h>
-#include <Utils.h>
-#include <vector>
-#include <CanvasTriangle.h>
-#include <TextureMap.h>
-
-// ... (TexturePoint and CanvasPoint classes and other code remain unchanged)
-
-void drawFilledTriangle(DrawingWindow& window, CanvasTriangle triangle, Colour color, TextureMap& texture) {
-    // Sort vertices based on their y-coordinate (top to bottom)
-    if (triangle[1].y < triangle[0].y) std::swap(triangle[0], triangle[1]);
-    if (triangle[2].y < triangle[0].y) std::swap(triangle[0], triangle[2]);
-    if (triangle[2].y < triangle[1].y) std::swap(triangle[1], triangle[2]);
-
-    // Calculate the texture coordinates for each vertex
-    TexturePoint texCoord1 = triangle[0].texturePoint;
-    TexturePoint texCoord2 = triangle[1].texturePoint;
-    TexturePoint texCoord3 = triangle[2].texturePoint;
-
-    // Interpolate texture coordinates along the edges
-    std::vector<TexturePoint> leftColumnTexCoords = interpolateThreeElementValues(texCoord1, texCoord3, triangle[0].y - triangle[2].y + 1);
-    std::vector<TexturePoint> rightColumnTexCoords = interpolateThreeElementValues(texCoord1, texCoord2, triangle[0].y - triangle[1].y + 1);
-
-    // Loop through each row in the triangle
-    for (int y = triangle[0].y; y >= triangle[2].y; y--) {
-        // Get the interpolated texture coordinates for this row
-        TexturePoint texCoordLeft = leftColumnTexCoords[triangle[0].y - y];
-        TexturePoint texCoordRight = rightColumnTexCoords[triangle[0].y - y];
-
-        // Interpolate texture coordinates along the row
-        std::vector<TexturePoint> rowTexCoords = interpolateThreeElementValues(texCoordLeft, texCoordRight, triangle[1].x - triangle[0].x + 1);
-
-        // Loop through each pixel in the row
-        for (int x = triangle[0].x; x <= triangle[1].x; x++) {
-            // Get the interpolated texture coordinates for this pixel
-            TexturePoint texCoord = rowTexCoords[x - triangle[0].x];
-
-            // Calculate the texture map pixel index values (convert floating-point texture coordinates to integers)
-            int texMapX = static_cast<int>(texCoord.x * (texture.width - 1));
-            int texMapY = static_cast<int>(texCoord.y * (texture.height - 1));
-
-            // Calculate the index of the pixel in the texture map vector
-            int texMapIndex = texMapY * texture.width + texMapX;
-
-            // Get the color from the texture map for this pixel
-            uint32_t texColor = texture.pixels[texMapIndex];
-
-            // Set the pixel's color in the window
-            window.setPixelColour(x, y, texColor);
-        }
-    }
-
-    // Draw the white stroked triangle over the filled triangle
-    Colour white(255, 255, 255);
-    drawLine(window, triangle[0], triangle[1], white);
-    drawLine(window, triangle[1], triangle[2], white);
-    drawLine(window, triangle[2], triangle[0], white);
-}
-
-void drawTextureTriangle(DrawingWindow& window, CanvasTriangle triangle, Colour color, TextureMap& texture) {
-	// Sort vertices based on their y-coordinate (top to bottom)
-	if (triangle[1].y < triangle[0].y) std::swap(triangle[0], triangle[1]);
-	if (triangle[2].y < triangle[0].y) std::swap(triangle[0], triangle[2]);
-	if (triangle[2].y < triangle[1].y) std::swap(triangle[1], triangle[2]);
-
-	// Calculate the texture coordinates for each vertex
-	TexturePoint texCoord1 = triangle[0].texturePoint;
-	TexturePoint texCoord2 = triangle[1].texturePoint;
-	TexturePoint texCoord3 = triangle[2].texturePoint;
-
-	// Interpolate texture coordinates along the edges
-	std::vector<TexturePoint> leftColumnTexCoords = interpolateThreeElementValues(texCoord1, texCoord3, triangle[0].y - triangle[2].y + 1);
-	std::vector<TexturePoint> rightColumnTexCoords = interpolateThreeElementValues(texCoord1, texCoord2, triangle[0].y - triangle[1].y + 1);
-
-	// Loop through each row in the triangle
-	for (int y = triangle[0].y; y >= triangle[2].y; y--) {
-		// Get the interpolated texture coordinates for this row
-		TexturePoint texCoordLeft = leftColumnTexCoords[triangle[0].y - y];
-		TexturePoint texCoordRight = rightColumnTexCoords[triangle[0].y - y];
-
-		// Interpolate texture coordinates along the row
-		std::vector<TexturePoint> rowTexCoords = interpolateThreeElementValues(texCoordLeft, texCoordRight, triangle[1].x - triangle[0].x + 1);
-
-		// Loop through each pixel in the row
-		for (int x = triangle[0].x; x <= triangle[1].x; x++) {
-			// Get the interpolated texture coordinates for this pixel
-			TexturePoint texCoord = rowTexCoords[x - triangle[0].x];
-
-			// Calculate the texture map pixel index values (convert floating-point texture coordinates to integers)
-			int texMapX = static_cast<int>(texCoord.x * (texture.width - 1));
-			int texMapY = static_cast<int>(texCoord.y * (texture.height - 1));
-
-			// Calculate the index of the pixel in the texture map vector
-			int texMapIndex = texMapY * texture.width + texMapX;
-
-			// Get the color from the texture map for this pixel
-			uint32_t texColor = texture.pixels[texMapIndex];
-
-			// Set the pixel's color in the window
-			window.setPixelColour(x, y, texColor);
-		}
+	else {
+		EX = top.x - ((mid.y - top.y) * fabs(R));
 	}
-
-	// Draw the white stroked triangle over the filled triangle
-	Colour white(255, 255, 255);
-	drawLine(window, triangle[0], triangle[1], white);
-	drawLine(window, triangle[1], triangle[2], white);
-	drawLine(window, triangle[2], triangle[0], white);
+	extra = CanvasPoint(EX, mid.y);
+	// Fill the top and bottom parts of the triangle with the texture
+	textureTriangle(window, textureMap, triangle, top, mid, extra);
+	textureTriangle(window, textureMap, triangle, bot, mid, extra);
 }
+
 
 void handleEvent(SDL_Event event, DrawingWindow& window) {
 	if (event.type == SDL_KEYDOWN) {
@@ -404,6 +319,20 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			// Create the triangle and draw the filled triangle with white stroked triangle
 			CanvasTriangle triangle(p1, p2, p3);
 			drawFilledTriangle(window, triangle, color);
+		}
+		else if (event.key.keysym.sym == SDLK_t) {    // Test Week 3 Task 5 drawTextureTriangle
+			// Load a texture map (need to be in the same directory as RedNoise.exe)
+			TextureMap textureMap = getTextureMap("texture.ppm");
+
+			CanvasPoint point1, point2, point3;
+			point1 = CanvasPoint(160, 10);
+			point2 = CanvasPoint(300, 230);
+			point3 = CanvasPoint(10, 150);
+			point1.texturePoint.x = 195; point1.texturePoint.y = 5;
+			point2.texturePoint.x = 395; point2.texturePoint.y = 380;
+			point3.texturePoint.x = 65; point3.texturePoint.y = 330;
+			CanvasTriangle triangle = CanvasTriangle(point1, point2, point3);
+			drawTextureTriangle(window, textureMap, triangle);
 		}
 	}
 	else if (event.type == SDL_MOUSEBUTTONDOWN) {
@@ -441,6 +370,7 @@ int main(int argc, char* argv[]) {
 	//drawLine(window, CanvasPoint(window.width / 3, window.height / 2), CanvasPoint(window.width * 2 / 3, window.height / 2), Colour(0, 0, 255));  // Blue horizontal line in the center
 
 
+
 	while (true) {
 		// We MUST poll for events - otherwise the window will freeze !
 		if (window.pollForInputEvents(event)) handleEvent(event, window);
@@ -452,6 +382,9 @@ int main(int argc, char* argv[]) {
 		// Test Week 2 Task 5
 		//drawRainbow(window);
 		
+		// Test Week 3 Task 5
+		//textureCanvas(window);
+
 		// Need to render the frame at the end, or nothing actually gets shown on the screen !
 		window.renderFrame();
 	}
