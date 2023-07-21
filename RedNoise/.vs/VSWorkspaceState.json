@@ -3,8 +3,9 @@
     "",
     "\\libs",
     "\\libs\\glm-0.9.7.2",
-    "\\libs\\sdw"
+    "\\libs\\sdw",
+    "\\src"
   ],
-  "SelectedNode": "\\texture.ppm",
+  "SelectedNode": "\\libs\\sdw\\CanvasPoint.cpp",
   "PreviewInSolutionExplorer": false
 }
