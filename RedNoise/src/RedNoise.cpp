@@ -13,9 +13,35 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <map>
 
 #define WIDTH 320
 #define HEIGHT 240
+
+float depthBuffer[HEIGHT][WIDTH];
+
+glm::vec3 cameraPosition(0.0, 0.0, 4.0);
+glm::mat3 cameraOrientation(1, 0, 0, 0, 1, 0, 0, 0, 1);
+glm::mat3 Rotation(1, 0, 0, 0, 1, 0, 0, 0, 1);
+
+glm::vec3 SpherePoint(0, 0, 0);
+
+float xyzdistance;
+float x = 0.0;
+float y = 0.0;
+glm::vec3 newCameraPosition = cameraPosition;
+
+
+int imagesequence = 81;
+float rotateSphereY = 0.0;
+
+float focalLength = 2.0;
+
+void clearDepthBuffer() {
+	for (int y = 0; y < HEIGHT; y++)
+		for (int x = 0; x < WIDTH; x++)
+			depthBuffer[y][x] = INT32_MIN;
+}
 
 void draw(DrawingWindow& window) {
 	window.clearPixels();
@@ -34,6 +60,18 @@ int judge(float number) {
 	if (number < 0) return -1; // bottom-to-top
 	else if (number == 0) return 0;
 	else return 1; // top-to-bottom
+}
+
+glm::vec3 NormalCalculator(glm::vec3 vertex, const std::vector<ModelTriangle>& modelTriangles) {
+	float faceindex = 0.0;
+	glm::vec3 vertexnormal;
+	for (ModelTriangle triangle : modelTriangles) {
+		if (triangle.vertices[0] == vertex || triangle.vertices[1] == vertex || triangle.vertices[2] == vertex) {
+			faceindex++;
+			vertexnormal += triangle.normal;
+		}
+	}
+	return glm::normalize(vertexnormal / faceindex);
 }
 
 std::vector<float> interpolateSingleFloats(float from, float to, size_t numberOfValue) {
@@ -132,88 +170,97 @@ void drawRainbow(DrawingWindow& window) {
 	window.renderFrame();
 }
 
-void drawLine(DrawingWindow& window, CanvasPoint from, CanvasPoint to, Colour color) {
-	int x0 = from.x;
-	int y0 = from.y;
-	int x1 = to.x;
-	int y1 = to.y;
-
-	int dx = abs(x1 - x0);
-	int dy = abs(y1 - y0);
-	int sx = (x0 < x1) ? 1 : -1;
-	int sy = (y0 < y1) ? 1 : -1;
-	int err = dx - dy;
-
-	while (true) {
-		// Calculate the 32-bit integer color value (RGBA format: 0xAARRGGBB)
-		uint32_t pixelColor = (255 << 24) + (color.red << 16) + (color.green << 8) + color.blue;
-
-		// Set the pixel's color in the window
-		window.setPixelColour(x0, y0, pixelColor);
-
-		if (x0 == x1 && y0 == y1) {
-			break;
-		}
-
-		int e2 = 2 * err;
-
-		if (e2 > -dy) {
-			err -= dy;
-			x0 += sx;
-		}
-
-		if (e2 < dx) {
-			err += dx;
-			y0 += sy;
+void drawLine(DrawingWindow& window, const CanvasPoint from, const CanvasPoint to, Colour colour) {
+	uint32_t c = (255 << 24) + (colour.red << 16) + (colour.green << 8) + (colour.blue);
+	if (x >= 0 && y >= 0 && x < WIDTH && y < HEIGHT) {
+		for (float i = 0.0; i < fmax(fabs(to.x - from.x), fabs(to.y - from.y)); i++) {
+			float x = from.x + (((to.x - from.x) / fmax(fabs(to.x - from.x), fabs(to.y - from.y))) * i);
+			float y = from.y + (((to.y - from.y) / fmax(fabs(to.x - from.x), fabs(to.y - from.y))) * i);
+			float z = from.depth + ((to.depth - from.depth) / fmax(fabs(to.x - from.x), fabs(to.y - from.y)) * i);
+			if (depthBuffer[int(round(y))][int(round(x))] <= z) {
+				depthBuffer[int(round(y))][int(round(x))] = z;
+				window.setPixelColour(round(x), round(y), c);
+			}
 		}
 	}
 }
 
-void drawTriangle(DrawingWindow& window, CanvasTriangle triangle, Colour color) {
+void drawStrokedTriangle(DrawingWindow& window, CanvasTriangle triangle, Colour color) {
 	drawLine(window, triangle[0], triangle[1], color);
 	drawLine(window, triangle[1], triangle[2], color);
 	drawLine(window, triangle[2], triangle[0], color);
 }
 
-void drawFilledTriangle(DrawingWindow& window, CanvasTriangle triangle, Colour color) {
-	// Sort vertices based on their y-coordinate (top to bottom)
-	if (triangle[1].y < triangle[0].y) std::swap(triangle[0], triangle[1]);
-	if (triangle[2].y < triangle[0].y) std::swap(triangle[0], triangle[2]);
-	if (triangle[2].y < triangle[1].y) std::swap(triangle[1], triangle[2]);
-
-	CanvasPoint top = triangle[0];
-	CanvasPoint mid = triangle[1];
-	CanvasPoint bot = triangle[2];
-
-	float slope1 = (mid.x - top.x) / (mid.y - top.y);
-	float slope2 = (bot.x - top.x) / (bot.y - top.y);
-
-	float currentX1 = top.x;
-	float currentX2 = top.x;
-	for (int y = top.y; y <= mid.y; y++) {
-		drawLine(window, { currentX1, static_cast<float>(y) }, { currentX2, static_cast<float>(y) }, color);
-
-		currentX1 += slope1;
-		currentX2 += slope2;
+void triangleRasteriser(DrawingWindow& window, CanvasPoint v1, CanvasPoint v2, CanvasPoint v3, Colour colour) {
+	CanvasPoint newV1 = v1;
+	CanvasPoint newV2 = v1;
+	for (float i = 1.00; i <= fabs(v2.y - v1.y); i++) {
+		newV1.x = v1.x + (v2.x - v1.x) * (i / fabs(v2.y - v1.y));
+		newV1.y -= judge(v1.y - v3.y);
+		newV1.depth = v1.depth + (v2.depth - v1.depth) * (i / fabs(v2.y - v1.y));
+		newV2.x = v1.x + (v3.x - v1.x) * (i / fabs(v2.y - v1.y));
+		newV2.y -= judge(v1.y - v3.y);
+		newV2.depth = v1.depth + (v3.depth - v1.depth) * (i / fabs(v2.y - v1.y));
+		drawLine(window, newV1, newV2, colour);
 	}
+}
 
-	// Now we have a second triangle (top,mid,bot). We need to find the slope to draw the bottom half of the triangle.
-	// But since we are using this to rasterize and fill our triangle, we have to determine if the first line or the second line will be longer.
-	if (bot.y != mid.y) {
-		slope1 = (bot.x - mid.x) / (bot.y - mid.y);
-		currentX1 = mid.x;
+void drawFilledTriangle(DrawingWindow& window, CanvasTriangle triangle, Colour colour) {
+	CanvasPoint topPoint;
+	CanvasPoint bottomPoint;
+	CanvasPoint givenPoint;
+	CanvasPoint extraPoint;
+	if (triangle.v0().y <= triangle.v1().y && triangle.v0().y <= triangle.v2().y) {
+		topPoint = triangle.v0();
+		if (triangle.v1().y >= triangle.v2().y) {
+			bottomPoint = triangle.v1();
+			givenPoint = triangle.v2();
+		}
+		else {
+			bottomPoint = triangle.v2();
+			givenPoint = triangle.v1();
+		}
 	}
-
-	for (int y = mid.y; y <= bot.y; y++) {
-		drawLine(window, { currentX1, static_cast<float>(y) }, { currentX2, static_cast<float>(y) }, color);
-
-		currentX1 += slope1;
-		currentX2 += slope2;
+	else if (triangle.v1().y <= triangle.v0().y && triangle.v1().y <= triangle.v2().y) {
+		topPoint = triangle.v1();
+		if (triangle.v0().y >= triangle.v2().y) {
+			bottomPoint = triangle.v0();
+			givenPoint = triangle.v2();
+		}
+		else {
+			bottomPoint = triangle.v2();
+			givenPoint = triangle.v0();
+		}
 	}
-
-	// Draw the white stroked triangle over the filled triangle
-	Colour white(255, 255, 255);
-	drawTriangle(window, triangle, white);
+	else if (triangle.v2().y <= triangle.v0().y && triangle.v2().y <= triangle.v1().y) {
+		topPoint = triangle.v2();
+		if (triangle.v1().y >= triangle.v0().y) {
+			bottomPoint = triangle.v1();
+			givenPoint = triangle.v0();
+		}
+		else {
+			bottomPoint = triangle.v0();
+			givenPoint = triangle.v1();
+		}
+	}
+	double R = (bottomPoint.x - topPoint.x) / (bottomPoint.y - topPoint.y);
+	float EX;
+	float EY;
+	float EDepth;
+	if (R >= 0) {
+		EX = topPoint.x + ((givenPoint.y - topPoint.y) * fabs(R));
+	}
+	else {
+		EX = topPoint.x - ((givenPoint.y - topPoint.y) * fabs(R));
+	}
+	EY = givenPoint.y;
+	float u = (-(EX - triangle.v1().x) * (triangle.v2().y - triangle.v1().y) + (EY - triangle.v1().y) * (triangle.v2().x - triangle.v1().x)) / (-(triangle.v0().x - triangle.v1().x) * (triangle.v2().y - triangle.v1().y) + (triangle.v0().y - triangle.v1().y) * (triangle.v2().x - triangle.v1().x));
+	float v = (-(EX - triangle.v2().x) * (triangle.v0().y - triangle.v2().y) + (EY - triangle.v2().y) * (triangle.v0().x - triangle.v2().x)) / (-(triangle.v1().x - triangle.v2().x) * (triangle.v0().y - triangle.v2().y) + (triangle.v1().y - triangle.v2().y) * (triangle.v0().x - triangle.v2().x));
+	float w = 1 - u - v;
+	EDepth = u * triangle.v0().depth + v * triangle.v1().depth + w * triangle.v2().depth;
+	extraPoint = CanvasPoint(EX, givenPoint.y, EDepth);
+	triangleRasteriser(window, topPoint, givenPoint, extraPoint, colour);
+	triangleRasteriser(window, bottomPoint, givenPoint, extraPoint, colour);
 }
 
 TextureMap getTextureMap(const std::string& image) {
@@ -261,7 +308,7 @@ void textureTriangle(DrawingWindow& window, const TextureMap& textureMap, Canvas
 
 void drawTextureTriangle(DrawingWindow& window, const TextureMap& textureMap, CanvasTriangle triangle) {
 	// draw white stroked triangle
-	drawTriangle(window, triangle, Colour(255, 255, 255));
+	drawStrokedTriangle(window, triangle, Colour(255, 255, 255));
 
 	// Sort vertices based on their y-coordinate (top to bottom)
 	if (triangle[1].y < triangle[0].y) std::swap(triangle[0], triangle[1]);
@@ -287,8 +334,139 @@ void drawTextureTriangle(DrawingWindow& window, const TextureMap& textureMap, Ca
 	textureTriangle(window, textureMap, triangle, bot, mid, extra);
 }
 
+Colour mtlConverter(double r, double g, double b) {
+	Colour colour = Colour(int(r * 255), int(g * 255), int(b * 255));
+	return colour;
+}
+
+std::map<std::string, Colour> mtlReader(const std::string& mtlFileName) {
+	std::map<std::string, Colour> colours;
+	std::string line;
+	std::string name;
+	std::ifstream File(mtlFileName);
+	while (getline(File, line)) {
+		std::vector<std::string> text = split(line, ' ');
+		if (text[0] == "newmtl") {
+			name = text[1];
+		}
+		else if (text[0] == "Kd") {
+			colours[name] = mtlConverter(std::stod(text[1]), std::stod(text[2]), std::stod(text[3]));
+		}
+	}
+	File.close();
+	return colours;
+}
+
+std::vector<ModelTriangle> objReader(const std::string& objFileName, const std::string& mtlFileName, float scalingFactor) {
+	std::vector<glm::vec3> vertices;
+	std::vector<std::vector<std::string>> facets;
+	std::vector<ModelTriangle> modelTriangles;
+	std::vector<glm::vec2> texture;
+	std::string line;
+	std::string colourName;
+	std::ifstream File(objFileName);
+	while (getline(File, line)) {
+		std::vector<std::string> text = split(line, ' ');
+		if (text[0] == "usemtl") {
+			colourName = text[1];
+		}
+		else if (text[0] == "v") {
+			glm::vec3 v = glm::vec3(std::stod(text[1]), std::stod(text[2]), std::stod(text[3]));
+			vertices.push_back(v);
+		}
+		else if (text[0] == "f") {
+			std::vector<std::string> f{ text[1], text[2], text[3], colourName };
+			facets.push_back(f);
+		}
+		else if (text[0] == "vt") {
+			glm::vec2 vt = glm::vec2(std::stod(text[1]), std::stod(text[2]));
+			//std::cout << glm::to_string(vt) << std::endl;
+			texture.push_back(vt);
+		}
+	}
+	File.close();
+	std::map<std::string, Colour> colourMap = mtlReader(mtlFileName);
+	for (std::vector<std::string> i : facets) {
+		glm::vec3 v0 = vertices[std::stoi(i[0]) - 1];
+		glm::vec3 v1 = vertices[std::stoi(i[1]) - 1];
+		glm::vec3 v2 = vertices[std::stoi(i[2]) - 1];
+		glm::vec3 normal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+		Colour colour = colourMap[i[3]];
+		ModelTriangle triangle = ModelTriangle(v0 * scalingFactor, v1 * scalingFactor, v2 * scalingFactor, colour);
+		triangle.normal = normal;
+		triangle.colour.name = i[3];
+
+		std::vector<std::string> v0String = split(i[0], '/');
+		std::vector<std::string> v1String = split(i[1], '/');
+		std::vector<std::string> v2String = split(i[2], '/');
+		if (atoi(v0String[1].c_str()) != 0 && atoi(v1String[1].c_str()) != 0 && atoi(v2String[1].c_str()) != 0) {
+			triangle.texturePoints = { TexturePoint(texture[atoi(v0String[1].c_str()) - 1][0],
+												   texture[atoi(v0String[1].c_str()) - 1][1]),
+									  TexturePoint(texture[atoi(v1String[1].c_str()) - 1][0],
+												   texture[atoi(v1String[1].c_str()) - 1][1]),
+									  TexturePoint(texture[atoi(v2String[1].c_str()) - 1][0],
+												   texture[atoi(v2String[1].c_str()) - 1][1]) };
+		}
+		modelTriangles.push_back(triangle);
+		//std::cout << triangle.texturePoints[0] << std::endl;
+	}
+
+	return modelTriangles;
+}
+
+CanvasPoint getCanvasIntersectionPoint(glm::vec3 cameraPosition, glm::mat3 cameraOrientation, glm::vec3 vertexPosition, float focallength, float scalingFactor) {
+	CanvasPoint twoDPoint;
+	glm::vec3 cameraToVertex = { vertexPosition.x - cameraPosition.x, vertexPosition.y - cameraPosition.y, vertexPosition.z - cameraPosition.z };
+	glm::vec3 cameraToVertexInCameraSpace = cameraToVertex * cameraOrientation;
+	twoDPoint.x = round(focallength * (-scalingFactor) * cameraToVertexInCameraSpace.x / cameraToVertexInCameraSpace.z + float(WIDTH / 2));
+	twoDPoint.y = round(focallength * scalingFactor * cameraToVertexInCameraSpace.y / cameraToVertexInCameraSpace.z + float(HEIGHT / 2));
+	twoDPoint.depth = 1 / fabs(cameraToVertexInCameraSpace.z);
+	return twoDPoint;
+}
+
+CanvasTriangle getCanvasIntersectionTriangle(glm::vec3 cameraPosition, glm::mat3 cameraOrientation, ModelTriangle triangle, float focallength, float scalingFactor) {
+	CanvasPoint v0 = getCanvasIntersectionPoint(cameraPosition, cameraOrientation, triangle.vertices[0], focallength, scalingFactor);
+	CanvasPoint v1 = getCanvasIntersectionPoint(cameraPosition, cameraOrientation, triangle.vertices[1], focallength, scalingFactor);
+	CanvasPoint v2 = getCanvasIntersectionPoint(cameraPosition, cameraOrientation, triangle.vertices[2], focallength, scalingFactor);
+	CanvasTriangle canvasTriangle = CanvasTriangle(v0, v1, v2);
+	return canvasTriangle;
+}
+
+void PointCloud(DrawingWindow& window, const std::vector<ModelTriangle> triangles, glm::vec3 cameraPosition, glm::mat3 cameraOrientation, float focallength, float scalingFactor, const Colour& colour) {
+	int red = colour.red;
+	int green = colour.green;
+	int blue = colour.blue;
+	uint32_t c = (255 << 24) + (red << 16) + (green << 8) + (blue);
+	for (ModelTriangle triangle : triangles) {
+		CanvasTriangle canvasTriangle = getCanvasIntersectionTriangle(cameraPosition, cameraOrientation, triangle, focallength, scalingFactor);
+		window.setPixelColour(canvasTriangle.v0().x, canvasTriangle.v0().y, c);
+		window.setPixelColour(canvasTriangle.v1().x, canvasTriangle.v1().y, c);
+		window.setPixelColour(canvasTriangle.v2().x, canvasTriangle.v2().y, c);
+	}
+}
+
+void WireFrame(DrawingWindow& window, const std::vector<ModelTriangle> triangles, glm::vec3 cameraPosition, glm::mat3 cameraOrientation, float focallength, float scalingFactor, const Colour& colour) {
+	for (ModelTriangle triangle : triangles) {
+		CanvasTriangle canvasTriangle = getCanvasIntersectionTriangle(cameraPosition, cameraOrientation, triangle, focallength, scalingFactor);
+		drawLine(window, canvasTriangle.v0(), canvasTriangle.v1(), triangle.colour);
+		drawLine(window, canvasTriangle.v1(), canvasTriangle.v2(), triangle.colour);
+		drawLine(window, canvasTriangle.v2(), canvasTriangle.v0(), triangle.colour);
+	}
+}
+
+void Rasterised(DrawingWindow& window, const std::vector<ModelTriangle> triangles, glm::vec3 cameraPosition, glm::mat3 cameraOrientation, float focallength, float scalingFactor, const Colour& colour) {
+	std::cout << "\ntriangle.colour" << std::endl;
+	for (ModelTriangle triangle : triangles) {
+		CanvasTriangle canvasTriangle = getCanvasIntersectionTriangle(cameraPosition, cameraOrientation, triangle, focallength, scalingFactor);
+		//ImageDepth(canvasTriangle, Colour(255, 255, 255));
+		std::cout << triangle.colour << std::endl;
+		drawFilledTriangle(window, canvasTriangle, triangle.colour);
+	}
+}
 
 void handleEvent(SDL_Event event, DrawingWindow& window) {
+	auto modelTriangles = objReader("cornell-box.obj", "cornell-box.mtl", 0.35);
+	
 	if (event.type == SDL_KEYDOWN) {
 		if (event.key.keysym.sym == SDLK_LEFT) std::cout << "LEFT" << std::endl;
 		else if (event.key.keysym.sym == SDLK_RIGHT) std::cout << "RIGHT" << std::endl;
@@ -305,7 +483,7 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 
 			// Create the triangle and draw it
 			CanvasTriangle triangle(p1, p2, p3);
-			drawTriangle(window, triangle, color);
+			drawStrokedTriangle(window, triangle, color);
 		}
 		else if (event.key.keysym.sym == SDLK_f) {	// Test Week 3 Task 4 draw filled triangle
 			// Generate three random points for the triangle
@@ -333,6 +511,11 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			point3.texturePoint.x = 65; point3.texturePoint.y = 330;
 			CanvasTriangle triangle = CanvasTriangle(point1, point2, point3);
 			drawTextureTriangle(window, textureMap, triangle);
+		}
+		else if (event.key.keysym.sym == SDLK_j) {
+			//PointCloud(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
 		}
 	}
 	else if (event.type == SDL_MOUSEBUTTONDOWN) {
@@ -369,6 +552,17 @@ int main(int argc, char* argv[]) {
 	//drawLine(window, CanvasPoint(window.width / 2, 0), CanvasPoint(window.width / 2, window.height), Colour(0, 255, 0));  // Green vertical line in the middle
 	//drawLine(window, CanvasPoint(window.width / 3, window.height / 2), CanvasPoint(window.width * 2 / 3, window.height / 2), Colour(0, 0, 255));  // Blue horizontal line in the center
 
+	// Test Week 4 Task 2
+	//std::string filename = "cornell-Box.obj";
+	//float scalingFactor = 0.35;
+
+	//std::vector<ModelTriangle> triangles = loadOBJGeometry(filename, scalingFactor);
+
+	//// Print out the loaded triangles
+	//for (const ModelTriangle& triangle : triangles) {
+	//	std::cout << "Triangle: " << triangle << std::endl;
+	//}
+
 
 
 	while (true) {
@@ -384,6 +578,8 @@ int main(int argc, char* argv[]) {
 		
 		// Test Week 3 Task 5
 		//textureCanvas(window);
+
+
 
 		// Need to render the frame at the end, or nothing actually gets shown on the screen !
 		window.renderFrame();

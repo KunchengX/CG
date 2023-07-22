@@ -1,7 +1,8 @@
 {
   "ExpandedNodes": [
     "",
-    "\\out\\build"
+    "\\libs",
+    "\\libs\\sdw"
   ],
   "SelectedNode": "\\out",
   "PreviewInSolutionExplorer": false
