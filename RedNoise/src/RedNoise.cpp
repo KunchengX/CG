@@ -23,8 +23,11 @@ float depthBuffer[HEIGHT][WIDTH];
 glm::vec3 cameraPosition(0.0, 0.0, 4.0);
 glm::mat3 cameraOrientation(1, 0, 0, 0, 1, 0, 0, 0, 1);
 glm::mat3 Rotation(1, 0, 0, 0, 1, 0, 0, 0, 1);
-
+glm::vec3 lightposition = glm::vec3(0.0, 0.5, 0.5);
 glm::vec3 SpherePoint(0, 0, 0);
+
+int shadingfactor = 1;
+std::vector<glm::vec3> lightpoints;
 
 float xyzdistance;
 float x = 0.0;
@@ -302,6 +305,26 @@ void drawTextureTriangle(DrawingWindow& window, const TextureMap& textureMap, Ca
 	textureTriangle(window, textureMap, triangle, bot, mid, extra);
 }
 
+/*空间四点确定球心坐标(克莱姆法则)*/
+void get_xyz(double x1, double y1, double z1, double x2, double y2, double z2, double x3, double y3, double z3, double x4, double y4, double z4) {
+	double x, y, z;
+	double a11, a12, a13, a21, a22, a23, a31, a32, a33, b1, b2, b3, d, d1, d2, d3;
+	a11 = 2 * (x2 - x1); a12 = 2 * (y2 - y1); a13 = 2 * (z2 - z1);
+	a21 = 2 * (x3 - x2); a22 = 2 * (y3 - y2); a23 = 2 * (z3 - z2);
+	a31 = 2 * (x4 - x3); a32 = 2 * (y4 - y3); a33 = 2 * (z4 - z3);
+	b1 = x2 * x2 - x1 * x1 + y2 * y2 - y1 * y1 + z2 * z2 - z1 * z1;
+	b2 = x3 * x3 - x2 * x2 + y3 * y3 - y2 * y2 + z3 * z3 - z2 * z2;
+	b3 = x4 * x4 - x3 * x3 + y4 * y4 - y3 * y3 + z4 * z4 - z3 * z3;
+	d = a11 * a22 * a33 + a12 * a23 * a31 + a13 * a21 * a32 - a11 * a23 * a32 - a12 * a21 * a33 - a13 * a22 * a31;
+	d1 = b1 * a22 * a33 + a12 * a23 * b3 + a13 * b2 * a32 - b1 * a23 * a32 - a12 * b2 * a33 - a13 * a22 * b3;
+	d2 = a11 * b2 * a33 + b1 * a23 * a31 + a13 * a21 * b3 - a11 * a23 * b3 - b1 * a21 * a33 - a13 * b2 * a31;
+	d3 = a11 * a22 * b3 + a12 * b2 * a31 + b1 * a21 * a32 - a11 * b2 * a32 - a12 * a21 * b3 - b1 * a22 * a31;
+	x = d1 / d;
+	y = d2 / d;
+	z = d3 / d;
+	SpherePoint = glm::vec3(x, y, z);
+}
+
 Colour mtlConverter(double r, double g, double b) {
 	Colour colour = Colour(int(r * 255), int(g * 255), int(b * 255));
 	return colour;
@@ -325,6 +348,22 @@ std::map<std::string, Colour> mtlReader(const std::string& mtlFileName) {
 	return colours;
 }
 
+std::map<std::string, std::string> mtlTextureReader(const std::string& mtlFileName) {
+	std::map<std::string, std::string> textures;
+	std::string textureName;
+	std::string line;
+	std::ifstream File(mtlFileName);
+	while (getline(File, line)) {
+		std::vector<std::string> text = split(line, ' ');
+		if (text[0] == "map_Kd") {
+			textureName = text[1];
+			textures[textureName] = textureName;
+		}
+	}
+	File.close();
+	return textures;
+}
+
 std::vector<ModelTriangle> objReader(const std::string& objFileName, const std::string& mtlFileName, float scalingFactor) {
 	std::vector<glm::vec3> vertices;
 	std::vector<std::vector<std::string>> facets;
@@ -343,6 +382,7 @@ std::vector<ModelTriangle> objReader(const std::string& objFileName, const std::
 			vertices.push_back(v);
 		}
 		else if (text[0] == "f") {
+			// text[1] = 14/3 ------> 14: obj point 3: texture point
 			std::vector<std::string> f{ text[1], text[2], text[3], colourName };
 			facets.push_back(f);
 		}
@@ -354,6 +394,10 @@ std::vector<ModelTriangle> objReader(const std::string& objFileName, const std::
 	}
 	File.close();
 	std::map<std::string, Colour> colourMap = mtlReader(mtlFileName);
+	//std::map<std::string, std::string> textureMap = mtlTextureReader(mtlFileName);
+
+	// 目前只有一个面需要着色
+	//TextureMap texture = getTextureMap(textureMap["texture.ppm"]);
 	for (std::vector<std::string> i : facets) {
 		glm::vec3 v0 = vertices[std::stoi(i[0]) - 1];
 		glm::vec3 v1 = vertices[std::stoi(i[1]) - 1];
@@ -378,6 +422,99 @@ std::vector<ModelTriangle> objReader(const std::string& objFileName, const std::
 		//std::cout << triangle.texturePoints[0] << std::endl;
 	}
 
+	return modelTriangles;
+}
+
+// 没有vt
+std::vector<ModelTriangle> cubeReader(const std::string& objFileName, float scalingFactor) {
+	std::vector<glm::vec3> vertices;
+	std::vector<std::vector<std::string>> facets;
+	std::vector<ModelTriangle> modelTriangles;
+	std::vector<glm::vec2> texture;
+	std::string line;
+	std::string colourName;
+	std::ifstream File(objFileName);
+	while (getline(File, line)) {
+		std::vector<std::string> text = split(line, ' ');
+		if (text[0] == "usemtl") {
+			colourName = text[1];
+		}
+		else if (text[0] == "v") {
+			glm::vec3 v = glm::vec3(std::stod(text[1]), std::stod(text[2]), std::stod(text[3]));
+			vertices.push_back(v);
+		}
+		else if (text[0] == "f") {
+			std::vector<std::string> f{ text[1], text[2], text[3], colourName };
+			facets.push_back(f);
+		}
+	}
+	File.close();
+	// 只有白色
+	
+	Colour white = Colour(255, 255, 255);
+	for (std::vector<std::string> i : facets) {
+		glm::vec3 v0 = vertices[std::stoi(i[0]) - 1];
+		glm::vec3 v1 = vertices[std::stoi(i[1]) - 1];
+		glm::vec3 v2 = vertices[std::stoi(i[2]) - 1];
+		glm::vec3 normal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+		Colour colour = white;
+		ModelTriangle modelTriangle = ModelTriangle(v0 * scalingFactor, v1 * scalingFactor, v2 * scalingFactor, colour);
+		modelTriangle.normal = normal;
+		modelTriangle.colour.name = i[3];
+
+		std::vector<std::string> v0String = split(i[0], '/');
+		std::vector<std::string> v1String = split(i[1], '/');
+		std::vector<std::string> v2String = split(i[2], '/');
+		if (atoi(v0String[1].c_str()) != 0 && atoi(v1String[1].c_str()) != 0 && atoi(v2String[1].c_str()) != 0) {
+			modelTriangle.texturePoints = {
+				TexturePoint(texture[atoi(v0String[1].c_str()) - 1][0], texture[atoi(v0String[1].c_str()) - 1][1]),
+				TexturePoint(texture[atoi(v1String[1].c_str()) - 1][0], texture[atoi(v1String[1].c_str()) - 1][1]),
+				TexturePoint(texture[atoi(v2String[1].c_str()) - 1][0], texture[atoi(v2String[1].c_str()) - 1][1])
+			};
+		}
+		modelTriangles.push_back(modelTriangle);
+		//std::cout << triangle.texturePoints[0] << std::endl;
+	}
+
+	return modelTriangles;
+}
+
+std::vector<ModelTriangle> SphereReader(const std::string& objFile, float scalingFactor) {
+	std::vector<glm::vec3> vertex;
+	std::vector<std::vector<std::string>> facets;
+	std::vector<ModelTriangle> modelTriangles;
+	std::string myText;
+	std::ifstream File(objFile);
+	while (getline(File, myText)) {
+		std::vector<std::string> text = split(myText, ' ');
+		if (text[0] == "v") {
+			glm::vec3 v = glm::vec3(std::stod(text[1]) * scalingFactor - 0.5, std::stod(text[2]) * scalingFactor - 1.1349, std::stod(text[3]) * scalingFactor);
+			vertex.push_back(v);
+		}
+		else if (text[0] == "f") {
+			std::vector<std::string> f{ text[1], text[2], text[3] };
+			facets.push_back(f);
+		}
+	}
+
+	File.close();
+	for (std::vector<std::string> i : facets) {
+		glm::vec3 v0 = vertex[std::stoi(i[0]) - 1];
+		glm::vec3 v1 = vertex[std::stoi(i[1]) - 1];
+		glm::vec3 v2 = vertex[std::stoi(i[2]) - 1];
+		glm::vec3 normal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+		float red = 12.0;
+		float green = 13.0;
+		float blue = 14.0;
+		Colour colour = Colour(int(red), int(green), int(blue));
+		ModelTriangle triangle = ModelTriangle(v0, v1, v2, colour);
+		triangle.normal = normal;
+		modelTriangles.push_back(triangle);
+	}
+	get_xyz(vertex[0].x, vertex[0].y, vertex[0].z, vertex[10].x, vertex[10].y, vertex[10].z, vertex[20].x, vertex[20].y, vertex[20].z, vertex[30].x, vertex[30].y, vertex[30].z);
+	xyzdistance = glm::distance(vertex[0], SpherePoint);
+	//std::cout<<xyzdistance<<std::endl;
+	//std::cout<< glm::to_string(SpherePoint)<<std::endl;
 	return modelTriangles;
 }
 
@@ -430,14 +567,72 @@ void Rasterised(DrawingWindow& window, const std::vector<ModelTriangle> triangle
 	}
 }
 
+glm::mat3 lookAt(glm::vec3 cameraPosition) {
+	glm::vec3 vertical(0, 1, 0);
+	glm::vec3 center(0, 0, 0);
+	glm::vec3 forward = glm::normalize(cameraPosition - center);
+	glm::vec3 right = glm::cross(vertical, forward);
+	glm::vec3 up = glm::cross(forward, right);
+	glm::mat3 newCameraOrientation = glm::mat3(right.x, right.y, right.z, up.x, up.y, up.z, forward.x, forward.y, forward.z);
+	return newCameraOrientation;
+}
+
 void handleEvent(SDL_Event event, DrawingWindow& window) {
-	auto modelTriangles = objReader("cornell-box.obj", "cornell-box.mtl", 0.35);
-	
+	auto modelTriangles = objReader("textured-cornell-box.obj", "textured-cornell-box.mtl", 0.35);
+	//std::vector<ModelTriangle> modelTriangles;
+	auto modelSphere = SphereReader("sphere.obj", 0.35);
+	for (ModelTriangle triangle : modelSphere) {
+		modelTriangles.push_back(triangle);
+	}
+	//auto modelTriangles = cubeReader("cube.obj", 0.35);
 	if (event.type == SDL_KEYDOWN) {
-		if (event.key.keysym.sym == SDLK_LEFT) std::cout << "LEFT" << std::endl;
-		else if (event.key.keysym.sym == SDLK_RIGHT) std::cout << "RIGHT" << std::endl;
-		else if (event.key.keysym.sym == SDLK_UP) std::cout << "UP" << std::endl;
-		else if (event.key.keysym.sym == SDLK_DOWN) std::cout << "DOWN" << std::endl;
+		if (event.key.keysym.sym == SDLK_LEFT) {
+			std::cout << "LEFT" << std::endl;
+			float radianx = 0.05;
+			window.clearPixels();
+			clearDepthBuffer();
+			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, -sin(radianx), 0, 1, 0, sin(radianx), 0, cos(radianx));
+			Rotation = lookAt(cameraPosition);
+			cameraPosition = cameraRotation * cameraPosition;
+			float focalLength = 2.0;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_RIGHT) {
+			std::cout << "RIGHT" << std::endl;
+			float radianx = 0.05;
+			window.clearPixels();
+			clearDepthBuffer();
+			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, sin(radianx), 0, 1, 0, -sin(radianx), 0, cos(radianx));
+			Rotation = lookAt(cameraPosition);
+			cameraPosition = cameraRotation * cameraPosition;
+			float focalLength = 2.0;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_UP) {
+			std::cout << "UP" << std::endl;
+			float radianx = 0.05;
+			window.clearPixels();
+			clearDepthBuffer();
+			//x axis anticlockwise
+			glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radianx), sin(radianx), 0, -sin(radianx), cos(radianx));
+			Rotation = lookAt(cameraPosition);
+			Rotation = Rotation * cameraRotation;
+			cameraPosition =  cameraRotation * cameraPosition;
+			float focalLength = 2.0;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_DOWN) {
+			std::cout << "DOWN" << std::endl;
+			float radianx = 0.05;
+			window.clearPixels();
+			clearDepthBuffer();
+			glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radianx), -sin(radianx), 0, sin(radianx), cos(radianx));
+			Rotation = lookAt(cameraPosition);
+			Rotation = Rotation * cameraRotation;
+			cameraPosition = cameraRotation * cameraPosition;
+			float focalLength = 2.0;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
 		else if (event.key.keysym.sym == SDLK_u) {	// Test Week 3 Task 3 draw stroked triangle
 			// Generate three random points for the triangle
 			CanvasPoint p1(rand() % window.width, rand() % window.height);
@@ -487,6 +682,81 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			
 			// Test Week 4 task 8 rasteried render
 			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_w) {
+			window.clearPixels();
+			clearDepthBuffer();
+			cameraPosition.y -= 0.05;
+			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_s) {
+			window.clearPixels();
+			clearDepthBuffer();
+			cameraPosition.y += 0.05;
+			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_a) {
+			window.clearPixels();
+			clearDepthBuffer();
+			cameraPosition.x += 0.05;
+			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_d) {
+			window.clearPixels();
+			clearDepthBuffer();
+			cameraPosition.x -= 0.05;
+			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_q) {
+			//left
+			window.clearPixels();
+			clearDepthBuffer();
+			x += 1.0;
+			float radianx = glm::radians(x);
+			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, sin(radianx), 0, 1, 0, -sin(radianx), 0, cos(radianx));
+			cameraPosition = cameraPosition * cameraRotation;
+			Rotation = Rotation * cameraRotation;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_e) {
+			//right
+			window.clearPixels();
+			clearDepthBuffer();
+			x -= 1.0;
+			float radianx = glm::radians(x);
+			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, -sin(radianx), 0, 1, 0, sin(radianx), 0, cos(radianx));
+			cameraPosition = cameraPosition * cameraRotation;
+			Rotation = Rotation * cameraRotation;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255)); 
+		}
+		else if (event.key.keysym.sym == SDLK_z) {
+			//downwards
+			window.clearPixels();
+			clearDepthBuffer();
+			y += 0.3;
+			float radiany = glm::radians(y);
+			glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radiany), sin(radiany), 0, -sin(radiany), cos(radiany));
+			cameraPosition = cameraPosition * cameraRotation;
+			Rotation = Rotation * cameraRotation;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_x) {
+			//upwards
+			window.clearPixels();
+			clearDepthBuffer();
+			y -= 0.3;
+			float radiany = glm::radians(y);
+			glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radiany), -sin(radiany), 0, sin(radiany), cos(radiany));
+			cameraPosition = cameraPosition * cameraRotation;
+			Rotation = Rotation * cameraRotation;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_0) {
+			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_c) {
+			clearDepthBuffer();
+			window.clearPixels();
 		}
 	}
 	else if (event.type == SDL_MOUSEBUTTONDOWN) {
@@ -549,6 +819,25 @@ int main(int argc, char* argv[]) {
 		
 		// Test Week 3 Task 5
 		//textureCanvas(window);
+
+		////Orbit
+		//auto modelTriangles = objReader("cornell-box.obj", "cornell-box.mtl", 0.35);
+		//float radianx = 0.01;
+		//window.clearPixels();
+		//clearDepthBuffer();
+		// //y axis anticlockwise
+		////glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, sin(radianx), 0, 1, 0, -sin(radianx), 0, cos(radianx));
+		// //y axis clockwise
+		//glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, -sin(radianx), 0, 1, 0, sin(radianx), 0, cos(radianx));
+		// //x axis anticlockwise
+		////glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radianx), -sin(radianx), 0, sin(radianx), cos(radianx));
+		// //use only in y axis rotation
+		//Rotation = lookAt(cameraPosition);
+		// //use only in y axis rotation
+		//Rotation = Rotation * cameraRotation;
+		//cameraPosition =  cameraRotation * cameraPosition;
+		//float focalLength = 2.0;
+		//Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
 
 
 
