@@ -351,6 +351,9 @@ std::vector<ModelTriangle> objReader(const std::string& objFileName, const std::
 			//std::cout << glm::to_string(vt) << std::endl;
 			texture.push_back(vt);
 		}
+		else if (text[0] == "vn") {
+
+		}
 	}
 	File.close();
 	std::map<std::string, Colour> colourMap = mtlReader(mtlFileName);
@@ -378,6 +381,66 @@ std::vector<ModelTriangle> objReader(const std::string& objFileName, const std::
 		//std::cout << triangle.texturePoints[0] << std::endl;
 	}
 
+	return modelTriangles;
+}
+
+//空间四点确定球心坐标(克莱姆法则)
+void get_xyz(double x1, double y1, double z1, double x2, double y2, double z2, double x3, double y3, double z3, double x4, double y4, double z4)
+{
+	double x, y, z;
+	double a11, a12, a13, a21, a22, a23, a31, a32, a33, b1, b2, b3, d, d1, d2, d3;
+	a11 = 2 * (x2 - x1); a12 = 2 * (y2 - y1); a13 = 2 * (z2 - z1);
+	a21 = 2 * (x3 - x2); a22 = 2 * (y3 - y2); a23 = 2 * (z3 - z2);
+	a31 = 2 * (x4 - x3); a32 = 2 * (y4 - y3); a33 = 2 * (z4 - z3);
+	b1 = x2 * x2 - x1 * x1 + y2 * y2 - y1 * y1 + z2 * z2 - z1 * z1;
+	b2 = x3 * x3 - x2 * x2 + y3 * y3 - y2 * y2 + z3 * z3 - z2 * z2;
+	b3 = x4 * x4 - x3 * x3 + y4 * y4 - y3 * y3 + z4 * z4 - z3 * z3;
+	d = a11 * a22 * a33 + a12 * a23 * a31 + a13 * a21 * a32 - a11 * a23 * a32 - a12 * a21 * a33 - a13 * a22 * a31;
+	d1 = b1 * a22 * a33 + a12 * a23 * b3 + a13 * b2 * a32 - b1 * a23 * a32 - a12 * b2 * a33 - a13 * a22 * b3;
+	d2 = a11 * b2 * a33 + b1 * a23 * a31 + a13 * a21 * b3 - a11 * a23 * b3 - b1 * a21 * a33 - a13 * b2 * a31;
+	d3 = a11 * a22 * b3 + a12 * b2 * a31 + b1 * a21 * a32 - a11 * b2 * a32 - a12 * a21 * b3 - b1 * a22 * a31;
+	x = d1 / d;
+	y = d2 / d;
+	z = d3 / d;
+	SpherePoint = glm::vec3(x, y, z);
+}
+
+std::vector<ModelTriangle> SphereReader(const std::string& objFile, float scalingFactor) {
+	std::vector<glm::vec3> vertex;
+	std::vector<std::vector<std::string>> facets;
+	std::vector<ModelTriangle> modelTriangles;
+	std::string myText;
+	std::ifstream File(objFile);
+	while (getline(File, myText)) {
+		std::vector<std::string> text = split(myText, ' ');
+		if (text[0] == "v") {
+			glm::vec3 v = glm::vec3(std::stod(text[1]) * scalingFactor - 0.5, std::stod(text[2]) * scalingFactor - 1.1349, std::stod(text[3]) * scalingFactor);
+			vertex.push_back(v);
+		}
+		else if (text[0] == "f") {
+			std::vector<std::string> f {text[1], text[2], text[3]};
+			facets.push_back(f);
+		}
+	}
+
+	File.close();
+	for (std::vector<std::string> i : facets) {
+		glm::vec3 v0 = vertex[std::stoi(i[0]) - 1];
+		glm::vec3 v1 = vertex[std::stoi(i[1]) - 1];
+		glm::vec3 v2 = vertex[std::stoi(i[2]) - 1];
+		glm::vec3 normal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+		float red = 255;
+		float green = 255;
+		float blue = 255;
+		Colour colour = Colour(int(red), int(green), int(blue));
+		ModelTriangle triangle = ModelTriangle(v0, v1, v2, colour);
+		triangle.normal = normal;
+		modelTriangles.push_back(triangle);
+	}
+	get_xyz(vertex[0].x, vertex[0].y, vertex[0].z, vertex[10].x, vertex[10].y, vertex[10].z, vertex[20].x, vertex[20].y, vertex[20].z, vertex[30].x, vertex[30].y, vertex[30].z);
+	xyzdistance = glm::distance(vertex[0], SpherePoint);
+	//std::cout<<xyzdistance<<std::endl;
+	//std::cout<< glm::to_string(SpherePoint)<<std::endl;
 	return modelTriangles;
 }
 
@@ -441,7 +504,8 @@ glm::mat3 lookAt(glm::vec3 cameraPosition) {
 }
 
 void handleEvent(SDL_Event event, DrawingWindow& window) {
-	auto modelTriangles = objReader("cornell-box.obj", "cornell-box.mtl", 0.35);
+	auto modelTriangles = objReader("car.obj", "car.mtl", 0.35);
+	//auto modelTriangles = SphereReader("sphere.obj", 0.35);
 	float radianx = 0.1;
 	float scale = 0.25;
 	if (event.type == SDL_KEYDOWN) {
