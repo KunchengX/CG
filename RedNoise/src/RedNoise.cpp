@@ -682,6 +682,62 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 			//drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
 		}
+		else if (event.key.keysym.sym == SDLK_0) {
+			window.clearPixels();
+			clearDepthBuffer();
+			radianx = float(M_PI);
+			// y axis anticlockwise
+			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, sin(radianx), 0, 1, 0, -sin(radianx), 0, cos(radianx));
+			// y axis clockwise
+			//glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, -sin(radianx), 0, 1, 0, sin(radianx), 0, cos(radianx));
+			// x axis anticlockwise
+			//glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radianx), -sin(radianx), 0, sin(radianx), cos(radianx));
+			// use only in y axis rotation
+			Rotation = lookAt(cameraPosition);
+			// use only in y axis rotation
+			Rotation = Rotation * cameraRotation;
+			cameraPosition = cameraRotation * cameraPosition;
+			float focalLength = 2.0;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_1) {
+			// turning right
+			window.clearPixels();
+			clearDepthBuffer();
+			radianx = float(M_PI) * 0.75;
+			// y axis anticlockwise
+			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, sin(radianx), 0, 1, 0, -sin(radianx), 0, cos(radianx));
+			// y axis clockwise
+			//glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, -sin(radianx), 0, 1, 0, sin(radianx), 0, cos(radianx));
+			// x axis anticlockwise
+			//glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radianx), -sin(radianx), 0, sin(radianx), cos(radianx));
+			// use only in y axis rotation
+			Rotation = lookAt(cameraPosition);
+			// use only in y axis rotation
+			Rotation = Rotation * cameraRotation;
+			cameraPosition = cameraRotation * cameraPosition;
+			float focalLength = 2.0;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_2) {
+			// turning left
+			window.clearPixels();
+			clearDepthBuffer();
+			radianx = float(M_PI) * 1.25;
+			// y axis anticlockwise
+			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, sin(radianx), 0, 1, 0, -sin(radianx), 0, cos(radianx));
+			// y axis clockwise
+			//glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, -sin(radianx), 0, 1, 0, sin(radianx), 0, cos(radianx));
+			// x axis anticlockwise
+			//glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radianx), -sin(radianx), 0, sin(radianx), cos(radianx));
+			// use only in y axis rotation
+			Rotation = lookAt(cameraPosition);
+			// use only in y axis rotation
+			Rotation = Rotation * cameraRotation;
+			cameraPosition = cameraRotation * cameraPosition;
+			float focalLength = 2.0;
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+		}
 		else if (event.key.keysym.sym == SDLK_c) {
 			clearDepthBuffer();
 			window.clearPixels();
