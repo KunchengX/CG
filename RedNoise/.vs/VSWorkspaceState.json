@@ -8,9 +8,11 @@
   "ExpandedNodes": [
     "",
     "\\libs",
+    "\\libs\\glm-0.9.7.2",
     "\\libs\\sdw",
     "\\out",
-    "\\out\\build"
+    "\\out\\build",
+    "\\src"
   ],
   "PreviewInSolutionExplorer": false
 }

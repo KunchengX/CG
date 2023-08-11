@@ -14,9 +14,12 @@
 #include <string>
 #include <sstream>
 #include <map>
+#include <glm/gtx/string_cast.hpp>
+#include <algorithm>
 
-#define WIDTH 800
-#define HEIGHT 600
+
+#define WIDTH 960
+#define HEIGHT 720
 
 float depthBuffer[HEIGHT][WIDTH];
 
@@ -25,12 +28,13 @@ glm::mat3 cameraOrientation(1, 0, 0, 0, 1, 0, 0, 0, 1);
 glm::mat3 Rotation(1, 0, 0, 0, 1, 0, 0, 0, 1);
 
 glm::vec3 SpherePoint(0, 0, 0);
-
+std::vector<glm::vec3> lightpoints;
+glm::vec3 lightposition = glm::vec3(0.0, 0.5, 0.5);
+int shadingfactor = 1;
 float xyzdistance;
 float x = 0.0;
 float y = 0.0;
 glm::vec3 newCameraPosition = cameraPosition;
-
 
 int imageSequence = 81;
 float rotateSphereY = 0.0;
@@ -503,11 +507,612 @@ glm::mat3 lookAt(glm::vec3 cameraPosition) {
 	return newCameraOrientation;
 }
 
+RayTriangleIntersection getClosestIntersection(const std::vector<ModelTriangle> triangles, glm::vec3 cameraPosition, glm::vec3 rayDirection) {
+	RayTriangleIntersection closestIntersection;
+	closestIntersection.distanceFromCamera = FLT_MAX;
+	for (size_t i = 0; i < triangles.size(); i++) {
+		glm::vec3 e0 = triangles[i].vertices[1] - triangles[i].vertices[0];
+		glm::vec3 e1 = triangles[i].vertices[2] - triangles[i].vertices[0];
+		glm::vec3 SPVector = cameraPosition - triangles[i].vertices[0];
+		glm::mat3 DEMatrix(-rayDirection, e0, e1);
+		glm::vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
+		if (possibleSolution[0] <= closestIntersection.distanceFromCamera && possibleSolution[0] >= 0.00001 && possibleSolution[1] >= 0 && possibleSolution[1] <= 1 && possibleSolution[2] >= 0 && possibleSolution[2] <= 1 && (possibleSolution[1] + possibleSolution[2]) <= 1) {
+			glm::vec3 intersectionPoint = cameraPosition + possibleSolution[0] * rayDirection;
+			closestIntersection = RayTriangleIntersection(intersectionPoint, possibleSolution[0], triangles[i], i);
+			closestIntersection.triangleIndex = i;
+		}
+	}
+	return closestIntersection;
+}
+
+glm::vec3 get3DPoint(CanvasPoint point, glm::vec3 cameraPosition, float focalLength, float scalingFactor) {
+	float u = point.x;
+	float v = point.y;
+	float z = cameraPosition.z - focalLength;
+	float x = ((u - (float(WIDTH) / 2)) / ((scalingFactor))) * 1;
+	float y = ((v - (float(HEIGHT) / 2)) / ((-scalingFactor))) * 1;
+	glm::vec3 threeDPoint(x + cameraPosition[0], y + cameraPosition[1], z);
+	return threeDPoint;
+}
+
+std::vector<glm::vec3> MultiLight(glm::vec3 center, int num, float spread) {
+	float x = center.x;
+	float y = center.y;
+	float z = center.z;
+	std::vector<glm::vec3> lightPosition;
+	for (int i = -num; i <= num; i++) {
+		for (int j = -num; j <= num; j++) {
+			if (fabs(i) + fabs(j) <= num) {
+				lightPosition.push_back(glm::vec3(x + i * spread, y, z + j * spread));
+			}
+		}
+	}
+	return lightPosition;
+}
+
+void drawRasterisedScene(DrawingWindow& window, const std::vector<ModelTriangle>& modelTriangles, glm::vec3 cameraPosition, float focalLength, float scalingFactor) {
+	int red;
+	int green;
+	int blue;
+	for (int y = 0; y < HEIGHT; y++) {
+		for (int x = 0; x < WIDTH; x++) {
+			CanvasPoint point = CanvasPoint(float(x), float(y));
+			glm::vec3 threeDPoint = get3DPoint(point, cameraPosition, focalLength, scalingFactor);
+			glm::vec3 rayDirection = glm::normalize(threeDPoint - cameraPosition);
+			RayTriangleIntersection closestIntersection = getClosestIntersection(modelTriangles, cameraPosition, rayDirection);
+			Colour colour = closestIntersection.intersectedTriangle.colour;
+			red = colour.red;
+			green = colour.green;
+			blue = colour.blue;
+			uint32_t c = (255 << 24) + (red << 16) + (green << 8) + (blue);
+			window.setPixelColour(x, y, c);
+		}
+	}
+}
+
+void drawRasterisedShadowScene(DrawingWindow& window, const std::vector<ModelTriangle>& modelTriangles, glm::vec3 cameraPosition, glm::vec3 lightPosition, float focalLength, float scalingFactor) {
+	int red;
+	int green;
+	int blue;
+	for (int y = 0; y < HEIGHT; y++) {
+		for (int x = 0; x < WIDTH; x++) {
+			CanvasPoint point = CanvasPoint(float(x), float(y));
+			glm::vec3 threeDPoint = get3DPoint(point, cameraPosition, focalLength, scalingFactor);
+			int S = 16;
+			glm::vec3 rayDirection = glm::normalize(threeDPoint - cameraPosition);
+			RayTriangleIntersection closestIntersection = getClosestIntersection(modelTriangles, cameraPosition, rayDirection);
+			Colour colour = closestIntersection.intersectedTriangle.colour;
+			glm::vec3 lightDirection = glm::normalize(closestIntersection.intersectionPoint - lightPosition);
+			float intensity = S / (4 * 3.1415 * glm::length(lightDirection) * glm::length(lightDirection));
+			RayTriangleIntersection lightIntersection = getClosestIntersection(modelTriangles, lightPosition, lightDirection);
+			if (closestIntersection.triangleIndex != lightIntersection.triangleIndex) {
+				red = ((colour.red) * 0.3);
+				green = ((colour.red) * 0.3);
+				blue = ((colour.red) * 0.3);
+			}
+			else {
+				Colour colour = closestIntersection.intersectedTriangle.colour;
+				red = fmin(colour.red * intensity, 255);
+				green = fmin(colour.green * intensity, 255);
+				blue = fmin(colour.blue * intensity, 255);
+			}
+			uint32_t c = (255 << 24) + (red << 16) + (green << 8) + blue;
+			window.setPixelColour(x, y, c);
+		}
+	}
+}
+
+void drawIncidence(DrawingWindow& window, const std::vector<ModelTriangle>& modelTriangles, glm::vec3 cameraPosition, glm::vec3 lightPosition, float focalLength, float scalingFactor) {
+	int red;
+	int green;
+	int blue;
+	for (int y = 0; y < HEIGHT; y++) {
+		for (int x = 0; x < WIDTH; x++) {
+			CanvasPoint point = CanvasPoint(float(x), float(y));
+			glm::vec3 threeDPoint = get3DPoint(point, cameraPosition, focalLength, scalingFactor);
+			glm::vec3 rayDirection = glm::normalize(threeDPoint - cameraPosition);
+			int S = 16;
+			RayTriangleIntersection closestIntersection = getClosestIntersection(modelTriangles, cameraPosition, rayDirection);
+			Colour colour = closestIntersection.intersectedTriangle.colour;
+			glm::vec3 lightDirection = closestIntersection.intersectionPoint - lightPosition;
+			ModelTriangle triangle = closestIntersection.intersectedTriangle;
+			float intensity = S / (4 * 3.1415 * glm::length(lightDirection) * glm::length(lightDirection));
+			float incidenceintensity = glm::clamp<float>(glm::dot(triangle.normal, -lightDirection), 0.0, 1.0);
+			RayTriangleIntersection lightIntersection = getClosestIntersection(modelTriangles, lightPosition, lightDirection);
+			if (closestIntersection.triangleIndex != lightIntersection.triangleIndex) {
+				red = 0;
+				green = 0;
+				blue = 0;
+			}
+			else {
+				Colour colour = closestIntersection.intersectedTriangle.colour;
+				red = fmin(colour.red * incidenceintensity * intensity, 255);
+				green = fmin(colour.green * incidenceintensity * intensity, 255);
+				blue = fmin(colour.blue * incidenceintensity * intensity, 255);
+			}
+			uint32_t c = (255 << 24) + (red << 16) + (green << 8) + (blue);
+			window.setPixelColour(x, y, c);
+		}
+	}
+}
+
+int ifPointInShadow(const std::vector<ModelTriangle> triangles, RayTriangleIntersection closestIntersection, glm::vec3 lightPosition) {
+	glm::vec3 intersectionPoint = closestIntersection.intersectionPoint;
+	glm::vec3 rayDirection = glm::normalize(lightPosition - intersectionPoint);
+	float distance = glm::distance(lightPosition, intersectionPoint);
+	for (size_t i = 0; i < triangles.size(); i++) {
+		glm::vec3 e0 = triangles[i].vertices[1] - triangles[i].vertices[0];
+		glm::vec3 e1 = triangles[i].vertices[2] - triangles[i].vertices[0];
+		glm::vec3 SPVector = intersectionPoint - triangles[i].vertices[0];
+		glm::mat3 DEMatrix(-rayDirection, e0, e1);
+		glm::vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
+		if (possibleSolution[0] <= distance && possibleSolution[0] >= 0.00001 && possibleSolution[1] >= 0 && possibleSolution[1] <= 1 && possibleSolution[2] >= 0 && possibleSolution[2] <= 1 && (possibleSolution[1] + possibleSolution[2]) <= 1) {
+			if (triangles[i].colour.red == 255 && triangles[i].colour.green == 0 && triangles[i].colour.blue == 0)
+				return 2;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+float softShadow(const std::vector<ModelTriangle> triangles, RayTriangleIntersection closestIntersection, glm::vec3 lightPosition) {
+	int yes = 0;
+	for (size_t i = 0; i < lightpoints.size(); i++) {
+		if (ifPointInShadow(triangles, closestIntersection, lightpoints[i]) == 1) yes += 1;
+		if (ifPointInShadow(triangles, closestIntersection, lightpoints[i]) == 2) return 0.6;
+	}
+	return yes / (float)lightpoints.size();
+}
+
+glm::vec4 refractionDirection(glm::vec3 incident, glm::vec3 normal, float refractiveIndex) {
+	float incidentAngle = dot(incident, normal);
+	float v1 = 1, v2 = refractiveIndex;
+	float c = v1 / v2;
+	if (incidentAngle > 0) {
+		c = 1 / c;
+		normal = -normal;
+	}
+
+	float cosTheta = fabs(incidentAngle);
+
+	float k = 1 - c * c * (1 - cosTheta * cosTheta);
+	if (k < 0) return glm::vec4(0, 0, 0, 0);
+	glm::vec3 refracted = glm::normalize(incident * c + normal * (c * cosTheta - sqrtf(k)));
+
+	return glm::vec4(refracted[0], refracted[1], refracted[2], judge(incidentAngle));
+}
+
+glm::vec3 allRayColour(const std::vector<ModelTriangle>& modelTriangles, glm::vec3 cameraPosition, glm::vec3 lightPosition, glm::vec3 rayDirection, int times) {
+	int red;
+	int green;
+	int blue;
+
+	if (times >= 5) {
+		red = 255;
+		green = 255;
+		blue = 255;
+	}
+
+	RayTriangleIntersection closestIntersection = getClosestIntersection(modelTriangles, cameraPosition, rayDirection);
+
+	Colour colour = closestIntersection.intersectedTriangle.colour;
+	glm::vec3 lightDirection = closestIntersection.intersectionPoint - lightPosition;
+	ModelTriangle triangle = closestIntersection.intersectedTriangle;
+	glm::vec3 normal = closestIntersection.intersectedTriangle.normal;
+	glm::vec3 point = closestIntersection.intersectionPoint;
+
+	if (closestIntersection.distanceFromCamera == FLT_MAX) {
+		red = 0;
+		green = 0;
+		blue = 0;
+	}
+
+
+	if (closestIntersection.intersectedTriangle.colour.red == 255 && closestIntersection.intersectedTriangle.colour.green == 0 && closestIntersection.intersectedTriangle.colour.blue == 0) {
+		glm::vec3 incident = rayDirection;
+		glm::vec3 reflection = glm::normalize(incident - (2 * dot(incident, normal) * normal));
+		glm::vec3 reflectionColour = allRayColour(modelTriangles, point, lightPosition, reflection, times + 1);
+		float refractive = 1.5;
+
+		normal = -normal;
+		glm::vec4 refraction = refractionDirection(incident, normal, refractive);
+		int direction = refraction[3];
+
+		glm::vec3 refracted(refraction[0], refraction[1], refraction[2]);
+		if (refracted == glm::vec3(0, 0, 0)) return reflectionColour;
+
+		glm::vec3 updatePoint;
+		if (direction == -1) {
+			// 进入物体
+			updatePoint = point - (0.0001f * normal);
+		}
+		else {
+			// 离开物体
+			updatePoint = point + (0.0001f * normal);
+		}
+		glm::vec3 refractionColour = allRayColour(modelTriangles, updatePoint, lightPosition, refracted, times++);
+
+		float rc = 0;
+
+		float ci = dot(incident, normal);
+		float ei = 1, et = refractive;
+
+		if (ci > 0) std::swap(ei, et);
+		float eit = ei / et;
+
+		float st = eit * sqrtf(std::max(0.0f, 1 - ci * ci));
+		if (st >= 1) rc = 1;
+		else {
+			float ct = sqrtf(std::max(0.0f, 1 - st * st));
+			ci = fabsf(ci);
+			float rs = ((et * ci) - (ei * ct)) / ((et * ci) + (ei * ct));
+			float rp = ((ei * ci) - (et * ct)) / ((ei * ci) + (et * ct));
+			rc = (rs * rs + rp * rp) / 2.0f;
+		}
+		float rc1 = 1 - rc;
+
+
+		red = (rc * reflectionColour[0]) + (rc1 * refractionColour[0]);
+		green = (rc * reflectionColour[1]) + (rc1 * refractionColour[1]);
+		blue = (rc * reflectionColour[2]) + (rc1 * refractionColour[2]);
+		glm::vec3 finalColour(red, green, blue);
+		return finalColour;
+
+	}
+	if (closestIntersection.intersectedTriangle.colour.red == 12 && closestIntersection.intersectedTriangle.colour.green == 13 && closestIntersection.intersectedTriangle.colour.blue == 14) {
+
+		float radianRotateSphereY = glm::radians(rotateSphereY);
+		glm::mat3 rotateSphereYMatrix = glm::mat3{ {cos(radianRotateSphereY), 0, sin(radianRotateSphereY)},
+												  {0, 1, 0},
+												  {-sin(radianRotateSphereY), 0, cos(radianRotateSphereY)} };
+		glm::vec3 pointTranslate = point - SpherePoint;
+		pointTranslate = rotateSphereYMatrix * pointTranslate;
+		point = pointTranslate + SpherePoint;
+		glm::vec3 InSphere = (point - SpherePoint) / xyzdistance;
+		float j = atan2(InSphere.z, InSphere.x);
+		float k = asin(InSphere.y);
+		float l = 1 - (j + 3.14) / (2 * 3.14);
+		float o = (k + 1.57) / 3.14;
+		TextureMap texturemap = getTextureMap("Heaadshot.ppm");
+		int n = int((l)*texturemap.width);
+		int m = int((1 - o) * texturemap.height - 0.001f);
+		uint32_t colour32 = texturemap.pixels[n + m * texturemap.width];
+		blue = colour32 & 0xff;
+		green = (colour32 >> 8) & 0xff;
+		red = (colour32 >> 16) & 0xff;
+		//std::cout << red << " " << green << " " << blue << std::endl;
+		colour = Colour(red, green, blue);
+	}
+	if (closestIntersection.intersectedTriangle.colour.red == 255 && closestIntersection.intersectedTriangle.colour.green == 0 && closestIntersection.intersectedTriangle.colour.blue == 255) {
+		glm::vec3 reflection = glm::normalize(rayDirection - (2 * glm::dot(rayDirection, triangle.normal) * triangle.normal));
+		return allRayColour(modelTriangles, closestIntersection.intersectionPoint, lightPosition, reflection, times + 1);
+	}
+	if (closestIntersection.intersectedTriangle.colour.name == "Cobbles") {
+		TextureMap textureMap = getTextureMap("texture.ppm");
+		glm::vec3 point = closestIntersection.intersectionPoint;
+		//std::cout << glm::to_string(point) << std::endl;
+		std::array<glm::vec3, 3> vertices = closestIntersection.intersectedTriangle.vertices;
+		std::array<TexturePoint, 3> textures = closestIntersection.intersectedTriangle.texturePoints;
+		//std::cout << glm::to_string(vertices[0]) << std::endl;
+		//std::cout <<textures[1].x << " " << textures[1].y << std::endl;
+		// Calculate barycentric coordinates
+		float alpha = (-(point.x - vertices[1].x) * (vertices[2].y - vertices[1].y) + (point.y - vertices[1].y) * (vertices[2].x - vertices[1].x)) / (-(vertices[0].x - vertices[1].x) * (vertices[2].y - vertices[1].y) + (vertices[0].y - vertices[1].y) * (vertices[2].x - vertices[1].x));
+		float beta = (-(point.x - vertices[2].x) * (vertices[0].y - vertices[2].y) + (point.y - vertices[2].y) * (vertices[0].x - vertices[2].x)) / (-(vertices[1].x - vertices[2].x) * (vertices[0].y - vertices[2].y) + (vertices[1].y - vertices[2].y) * (vertices[0].x - vertices[2].x));
+		float gamma = 1 - alpha - beta;
+		// Get texture point
+		CanvasPoint texturePoint((alpha * textures[0].x * textureMap.width + beta * textures[1].x * textureMap.width + gamma * textures[2].x * textureMap.width), (alpha * textures[0].y * textureMap.height + beta * textures[1].y * textureMap.height + gamma * textures[2].y * textureMap.height));
+		// Locate the texture point position in texture map pixel list
+		int index = int(texturePoint.y) * textureMap.width + int(texturePoint.x);
+		//std::cout << "Index of texture is:" << index << " corresponds to texture point x:" << texturePoint.x << " and y: " << texturePoint.y << "\n" << std::endl;
+		uint32_t colour32 = textureMap.pixels[index];
+		blue = colour32 & 0xff;
+		green = (colour32 >> 8) & 0xff;
+		red = (colour32 >> 16) & 0xff;
+		//std::cout << red << " " << green << " " << blue << std::endl;
+		colour = Colour(red, green, blue);
+	}
+
+	int S = 16;
+	glm::vec3 pointA = closestIntersection.intersectedTriangle.vertices[0];
+	glm::vec3 pointB = closestIntersection.intersectedTriangle.vertices[1];
+	glm::vec3 pointC = closestIntersection.intersectedTriangle.vertices[2];
+	glm::vec3 view = glm::normalize(closestIntersection.intersectionPoint - cameraPosition);
+	glm::vec3 n1 = NormalCalculator(pointA, modelTriangles);
+	glm::vec3 n2 = NormalCalculator(pointB, modelTriangles);
+	glm::vec3 n3 = NormalCalculator(pointC, modelTriangles);
+	float l1, l2, l3;
+	if (pointA.x == pointB.x && pointA.x == pointC.x) {
+		float det = ((pointB.z - pointC.z) * (pointA.y - pointC.y)) + ((pointA.z - pointC.z) * (pointC.y - pointB.y));
+		l1 = ((pointB.z - pointC.z) * (closestIntersection.intersectionPoint.y - pointC.y) + (pointC.y - pointB.y) * (closestIntersection.intersectionPoint.z - pointC.z)) / det;
+		l2 = ((pointC.z - pointA.z) * (closestIntersection.intersectionPoint.y - pointC.y) + (pointA.y - pointC.y) * (closestIntersection.intersectionPoint.z - pointC.z)) / det;
+		l3 = 1 - l1 - l2;
+	}
+	else if (pointA.y == pointB.y && pointA.y == pointC.y) {
+		float det = ((pointB.z - pointC.z) * (pointA.x - pointC.x)) + ((pointC.x - pointB.x) * (pointA.z - pointC.z));
+		l1 = (((pointB.z - pointC.z) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointC.x - pointB.x) * (closestIntersection.intersectionPoint.z - pointC.z))) / det;
+		l2 = (((pointC.z - pointA.z) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointA.x - pointC.x) * (closestIntersection.intersectionPoint.z - pointC.z))) / det;
+		l3 = 1 - l1 - l2;
+	}
+	else {
+		float det = ((pointB.y - pointC.y) * (pointA.x - pointC.x)) + ((pointC.x - pointB.x) * (pointA.y - pointC.y));
+		l1 = (((pointB.y - pointC.y) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointC.x - pointB.x) * (closestIntersection.intersectionPoint.y - pointC.y))) / det;
+		l2 = (((pointC.y - pointA.y) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointA.x - pointC.x) * (closestIntersection.intersectionPoint.y - pointC.y))) / det;
+		l3 = 1 - l1 - l2;
+	}
+	Colour Background = Colour(0, 0, 0);
+	if (closestIntersection.distanceFromCamera == FLT_MAX) {
+		return glm::vec3(Background.red, Background.green, Background.blue);
+	}
+	if (shadingfactor == 1) {
+		float intensity = S / (4 * 3.1415 * glm::length(lightDirection) * glm::length(lightDirection));
+		glm::vec3 reflection = glm::normalize(lightDirection - (2 * glm::dot(lightDirection, triangle.normal) * triangle.normal));
+		float specularintensity = glm::dot(view, reflection);
+		specularintensity = pow(specularintensity, 256);
+		float incidenceintensity = glm::clamp<float>(glm::dot(triangle.normal, -lightDirection), 0.0, 1.0);
+		red = fmin(colour.red * (incidenceintensity * intensity + specularintensity) + 35, 255);
+		green = fmin(colour.green * (incidenceintensity * intensity + specularintensity) + 35, 255);
+		blue = fmin(colour.blue * (incidenceintensity * intensity + specularintensity) + 35, 255);
+	}
+	else if (shadingfactor == 2) {
+		glm::vec3 lightDirection1 = glm::normalize(pointA - lightPosition);
+		glm::vec3 lightDirection2 = glm::normalize(pointB - lightPosition);
+		glm::vec3 lightDirection3 = glm::normalize(pointC - lightPosition);
+		glm::vec3 viewA = glm::normalize(pointA - cameraPosition);
+		glm::vec3 viewB = glm::normalize(pointB - cameraPosition);
+		glm::vec3 viewC = glm::normalize(pointC - cameraPosition);
+		float incidenceintensity1 = glm::clamp<float>(glm::dot(n1, -lightDirection1), 0.0, 1.0);
+		float incidenceintensity2 = glm::clamp<float>(glm::dot(n2, -lightDirection2), 0.0, 1.0);
+		float incidenceintensity3 = glm::clamp<float>(glm::dot(n3, -lightDirection3), 0.0, 1.0);
+		glm::vec3 reflection1 = glm::normalize(lightDirection1 - (2.0f * glm::dot(lightDirection1, n1) * n1));
+		glm::vec3 reflection2 = glm::normalize(lightDirection2 - (2.0f * glm::dot(lightDirection2, n2) * n2));
+		glm::vec3 reflection3 = glm::normalize(lightDirection3 - (2.0f * glm::dot(lightDirection3, n3) * n3));
+		float specularintensity1 = glm::dot(viewA, reflection1);
+		float specularintensity2 = glm::dot(viewB, reflection2);
+		float specularintensity3 = glm::dot(viewC, reflection3);
+		specularintensity1 = fabs(pow(specularintensity1, 256));
+		specularintensity2 = fabs(pow(specularintensity2, 256));
+		specularintensity3 = fabs(pow(specularintensity3, 256));
+		float intensity1 = S / (4 * 3.1415 * glm::length(lightDirection1) * glm::length(lightDirection1));
+		float intensity2 = S / (4 * 3.1415 * glm::length(lightDirection2) * glm::length(lightDirection2));
+		float intensity3 = S / (4 * 3.1415 * glm::length(lightDirection3) * glm::length(lightDirection3));
+		float totalintensity1 = (incidenceintensity1 * intensity1 + specularintensity1);
+		float totalintensity2 = (incidenceintensity2 * intensity2 + specularintensity2);
+		float totalintensity3 = (incidenceintensity3 * intensity3 + specularintensity3);
+		float totalinternsity = l1 * totalintensity1 + l2 * totalintensity2 + l3 * totalintensity3;
+		red = fmin(colour.red * totalinternsity, 255);
+		green = fmin(colour.green * totalinternsity, 255);
+		blue = fmin(colour.blue * totalinternsity, 255);
+	}
+	else if (shadingfactor == 3)
+	{
+		glm::vec3 normal = (l1 * n1) + (l2 * n2) + (l3 * n3);
+		float intensity = S / (4 * 3.1415 * glm::length(lightDirection) * glm::length(lightDirection));
+		glm::vec3 reflection = glm::normalize(lightDirection - (2.0f * glm::dot(lightDirection, normal) * normal));
+		float specularintensity = glm::dot(view, reflection);
+		specularintensity = pow(specularintensity, 256);
+		float incidenceintensity = glm::clamp<float>(glm::dot(normal, -lightDirection), 0.0, 1.0);
+		red = fmin(colour.red * (incidenceintensity * intensity + specularintensity) + 35, 255);
+		green = fmin(colour.green * (incidenceintensity * intensity + specularintensity) + 35, 255);
+		blue = fmin(colour.blue * (incidenceintensity * intensity + specularintensity) + 35, 255);
+	}
+
+	glm::vec3 originColour = glm::vec3(red, green, blue);
+
+	if (ifPointInShadow(modelTriangles, closestIntersection, lightPosition) &&
+		closestIntersection.intersectedTriangle.colour.red == 255 && closestIntersection.intersectedTriangle.colour.green == 0 && closestIntersection.intersectedTriangle.colour.blue == 0) {
+		//std::cout << 1 << std::endl;
+		return originColour * 0.2f;
+	}
+	else if (ifPointInShadow(modelTriangles, closestIntersection, lightPosition)) {
+		float shadowFraction = softShadow(modelTriangles, closestIntersection, lightPosition);
+		red = fmin(255, colour.red * (1 - shadowFraction) + 0.2 * shadowFraction * colour.red);
+		green = fmin(255, colour.green * (1 - shadowFraction) + 0.2 * shadowFraction * colour.green);
+		blue = fmin(255, colour.blue * (1 - shadowFraction) + 0.2 * shadowFraction * colour.blue);
+		if (red < originColour[0] && green < originColour[1] && blue < originColour[2])
+			return glm::vec3(red, green, blue);
+		else
+			return originColour;
+	}
+
+	return glm::vec3(red, green, blue);
+
+}
+
+void drawSpecular(DrawingWindow& window, const std::vector<ModelTriangle>& modelTriangles, glm::vec3 cameraPosition, glm::vec3 lightPosition, float focalLength, float scalingFactor) {
+	lightpoints = MultiLight(lightPosition, 15, 0.03);
+	glm::mat3x3 lookAtMatrix = lookAt(cameraPosition);
+	if (true) rotateSphereY += 35;
+	for (int y = 0; y < HEIGHT; y++) {
+		for (int x = 0; x < WIDTH; x++) {
+			CanvasPoint point = CanvasPoint(float(x), float(y));
+			glm::vec3 threeDPoint = get3DPoint(point, cameraPosition, focalLength, scalingFactor);
+			glm::vec3 rayDirection = glm::normalize(threeDPoint - cameraPosition);
+			rayDirection = glm::normalize(rayDirection * glm::inverse(lookAtMatrix));
+			glm::vec3 colour = allRayColour(modelTriangles, cameraPosition, lightPosition, rayDirection, 1);
+			uint32_t c = (255 << 24) + (int(colour[0]) << 16) + (int(colour[1]) << 8) + int(colour[2]);
+			window.setPixelColour(x, y, c);
+		}
+	}
+}
+
+void drawGouraud(DrawingWindow& window, const std::vector<ModelTriangle>& modelTriangles, glm::vec3 cameraPosition, glm::vec3 lightPosition, float focalLength, float scalingFactor) {
+	int red;
+	int green;
+	int blue;
+	for (int y = 0; y < HEIGHT; y++) {
+		for (int x = 0; x < WIDTH; x++) {
+			CanvasPoint point = CanvasPoint(float(x), float(y));
+			glm::vec3 threeDPoint = get3DPoint(point, cameraPosition, focalLength, scalingFactor);
+			glm::vec3 rayDirection = threeDPoint - cameraPosition;
+			RayTriangleIntersection closestIntersection = getClosestIntersection(modelTriangles, cameraPosition, rayDirection);
+			glm::vec3 lightDirection = glm::normalize(closestIntersection.intersectionPoint - lightPosition);
+			RayTriangleIntersection lightIntersection = getClosestIntersection(modelTriangles, lightPosition, lightDirection);
+			Colour colour = closestIntersection.intersectedTriangle.colour;
+			glm::vec3 view = glm::normalize(closestIntersection.intersectionPoint - cameraPosition);
+			glm::vec3 pointA = closestIntersection.intersectedTriangle.vertices[0];
+			glm::vec3 pointB = closestIntersection.intersectedTriangle.vertices[1];
+			glm::vec3 pointC = closestIntersection.intersectedTriangle.vertices[2];
+			glm::vec3 n1 = NormalCalculator(pointA, modelTriangles);
+			glm::vec3 n2 = NormalCalculator(pointB, modelTriangles);
+			glm::vec3 n3 = NormalCalculator(pointC, modelTriangles);
+			glm::vec3 lightDirection1 = glm::normalize(lightPosition - n1);
+			glm::vec3 lightDirection2 = glm::normalize(lightPosition - n2);
+			glm::vec3 lightDirection3 = glm::normalize(lightPosition - n3);
+			float l1, l2, l3;
+			if (pointA.x == pointB.x && pointA.x == pointC.x) {
+				float det = ((pointB.z - pointC.z) * (pointA.y - pointC.y)) + ((pointA.z - pointC.z) * (pointC.y - pointB.y));
+				l1 = ((pointB.z - pointC.z) * (closestIntersection.intersectionPoint.y - pointC.y) + (pointC.y - pointB.y) * (closestIntersection.intersectionPoint.z - pointC.z)) / det;
+				l2 = ((pointC.z - pointA.z) * (closestIntersection.intersectionPoint.y - pointC.y) + (pointA.y - pointC.y) * (closestIntersection.intersectionPoint.z - pointC.z)) / det;
+				l3 = 1 - l1 - l2;
+			}
+			else if (pointA.y == pointB.y && pointA.y == pointC.y) {
+				float det = ((pointB.z - pointC.z) * (pointA.x - pointC.x)) + ((pointC.x - pointB.x) * (pointA.z - pointC.z));
+				l1 = (((pointB.z - pointC.z) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointC.x - pointB.x) * (closestIntersection.intersectionPoint.z - pointC.z))) / det;
+				l2 = (((pointC.z - pointA.z) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointA.x - pointC.x) * (closestIntersection.intersectionPoint.z - pointC.z))) / det;
+				l3 = 1 - l1 - l2;
+			}
+			else {
+				float det = ((pointB.y - pointC.y) * (pointA.x - pointC.x)) + ((pointC.x - pointB.x) * (pointA.y - pointC.y));
+				l1 = (((pointB.y - pointC.y) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointC.x - pointB.x) * (closestIntersection.intersectionPoint.y - pointC.y))) / det;
+				l2 = (((pointC.y - pointA.y) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointA.x - pointC.x) * (closestIntersection.intersectionPoint.y - pointC.y))) / det;
+				l3 = 1 - l1 - l2;
+			}
+			float incidenceintensity1 = glm::clamp<float>(glm::dot(n1, -lightDirection), 0.0, 1.0);
+			float incidenceintensity2 = glm::clamp<float>(glm::dot(n2, -lightDirection), 0.0, 1.0);
+			float incidenceintensity3 = glm::clamp<float>(glm::dot(n3, -lightDirection), 0.0, 1.0);
+			glm::vec3 reflection1 = glm::normalize(lightDirection - (2.0f * n1 * glm::dot(lightDirection, n1)));
+			glm::vec3 reflection2 = glm::normalize(lightDirection - (2.0f * n2 * glm::dot(lightDirection, n2)));
+			glm::vec3 reflection3 = glm::normalize(lightDirection - (2.0f * n3 * glm::dot(lightDirection, n3)));
+			float specularintensity1 = glm::dot(view, reflection1);
+			float specularintensity2 = glm::dot(view, reflection2);
+			float specularintensity3 = glm::dot(view, reflection3);
+			specularintensity1 = fabs(pow(specularintensity1, 128));
+			specularintensity2 = fabs(pow(specularintensity2, 128));
+			specularintensity3 = fabs(pow(specularintensity3, 128));
+			int S = 16;
+			float intensity1 = S / (4 * 3.1415 * glm::length(lightDirection1) * glm::length(lightDirection1));
+			float intensity2 = S / (4 * 3.1415 * glm::length(lightDirection2) * glm::length(lightDirection2));
+			float intensity3 = S / (4 * 3.1415 * glm::length(lightDirection3) * glm::length(lightDirection3));
+			float totalintensity1 = (incidenceintensity1 * intensity1 + specularintensity1);
+			float totalintensity2 = (incidenceintensity2 * intensity2 + specularintensity2);
+			float totalintensity3 = (incidenceintensity3 * intensity3 + specularintensity3);
+			float totalinternsity = l1 * totalintensity1 + l2 * totalintensity2 + l3 * totalintensity3;
+			Colour Background = Colour(0, 0, 0);
+			Colour yellowcolour = Colour(255, 0, 255);
+			if (closestIntersection.distanceFromCamera == FLT_MAX) {
+				uint32_t backgroundc = (255 << 24) + (Background.red << 16) + (Background.green << 8) + (Background.blue);
+				window.setPixelColour(x, y, backgroundc);
+				continue;
+			}
+			if (closestIntersection.triangleIndex != lightIntersection.triangleIndex) {
+				//Colour colour = closestIntersection.intersectedTriangle.colour;
+				//red = (colour.red*totalinternsity+55)*0.3;
+				//green = ((colour.green*totalinternsity+55)*0.3);
+				//blue = ((colour.blue*totalinternsity+55)*0.3);
+				Colour colour = closestIntersection.intersectedTriangle.colour;
+				red = colour.red * totalinternsity * 0.5f;
+				green = colour.green * totalinternsity * 0.5f;
+				blue = colour.blue * totalinternsity * 0.5f;
+			}
+			else {
+				Colour colour = closestIntersection.intersectedTriangle.colour;
+				//colour = closestIntersection.intersectedTriangle.colour;
+				red = fmin(colour.red * totalinternsity, 255);
+				green = fmin(colour.green * totalinternsity, 255);
+				blue = fmin(colour.blue * totalinternsity, 255);
+			}
+			uint32_t c = (255 << 24) + (red << 16) + (green << 8) + (blue);
+			window.setPixelColour(x, y, c);
+		}
+	}
+}
+
+void drawPhong(DrawingWindow& window, const std::vector<ModelTriangle>& modelTriangles, glm::vec3 cameraPosition, glm::vec3 lightPosition, float focalLength, float scalingFactor) {
+	int red;
+	int green;
+	int blue;
+	for (int y = 0; y < HEIGHT; y++) {
+		for (int x = 0; x < WIDTH; x++) {
+			int S = 16;
+			CanvasPoint point = CanvasPoint(float(x), float(y));
+			glm::vec3 threeDPoint = get3DPoint(point, cameraPosition, focalLength, scalingFactor);
+			glm::vec3 rayDirection = glm::normalize(threeDPoint - cameraPosition);
+			RayTriangleIntersection closestIntersection = getClosestIntersection(modelTriangles, cameraPosition, rayDirection);
+			Colour colour = closestIntersection.intersectedTriangle.colour;
+			glm::vec3 lightDirection = glm::normalize(closestIntersection.intersectionPoint - lightPosition);
+			ModelTriangle triangle = closestIntersection.intersectedTriangle;
+			float intensity = S / (4 * 3.1415 * glm::length(lightDirection) * glm::length(lightDirection));
+			glm::vec3 pointA = closestIntersection.intersectedTriangle.vertices[0];
+			glm::vec3 pointB = closestIntersection.intersectedTriangle.vertices[1];
+			glm::vec3 pointC = closestIntersection.intersectedTriangle.vertices[2];
+			glm::vec3 n1 = NormalCalculator(pointA, modelTriangles);
+			glm::vec3 n2 = NormalCalculator(pointB, modelTriangles);
+			glm::vec3 n3 = NormalCalculator(pointC, modelTriangles);
+			float l1, l2, l3;
+			if (pointA.x == pointB.x && pointA.x == pointC.x) {
+				float det = ((pointB.z - pointC.z) * (pointA.y - pointC.y)) + ((pointA.z - pointC.z) * (pointC.y - pointB.y));
+				l1 = ((pointB.z - pointC.z) * (closestIntersection.intersectionPoint.y - pointC.y) + (pointC.y - pointB.y) * (closestIntersection.intersectionPoint.z - pointC.z)) / det;
+				l2 = ((pointC.z - pointA.z) * (closestIntersection.intersectionPoint.y - pointC.y) + (pointA.y - pointC.y) * (closestIntersection.intersectionPoint.z - pointC.z)) / det;
+				l3 = 1 - l1 - l2;
+			}
+			else if (pointA.y == pointB.y && pointB.y == pointC.y) {
+				float det = ((pointB.z - pointC.z) * (pointA.x - pointC.x)) + ((pointC.x - pointB.x) * (pointA.z - pointC.z));
+				l1 = (((pointB.z - pointC.z) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointC.x - pointB.x) * (closestIntersection.intersectionPoint.z - pointC.z))) / det;
+				l2 = (((pointC.z - pointA.z) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointA.x - pointC.x) * (closestIntersection.intersectionPoint.z - pointC.z))) / det;
+				l3 = 1 - l1 - l2;
+			}
+			else {
+				float det = ((pointB.y - pointC.y) * (pointA.x - pointC.x)) + ((pointC.x - pointB.x) * (pointA.y - pointC.y));
+				l1 = (((pointB.y - pointC.y) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointC.x - pointB.x) * (closestIntersection.intersectionPoint.y - pointC.y))) / det;
+				l2 = (((pointC.y - pointA.y) * (closestIntersection.intersectionPoint.x - pointC.x)) + ((pointA.x - pointC.x) * (closestIntersection.intersectionPoint.y - pointC.y))) / det;
+				l3 = 1 - l1 - l2;
+			}
+			glm::vec3 normal = (l1 * n1) + (l2 * n2) + (l3 * n3);
+			glm::vec3 reflection = glm::normalize(lightDirection - (2.0f * normal * glm::dot(lightDirection, normal)));
+			glm::vec3 view = glm::normalize(closestIntersection.intersectionPoint - cameraPosition);
+			float specularintensity = glm::dot(view, reflection);
+			specularintensity = pow(specularintensity, 128);
+			float incidenceintensity = glm::clamp<float>(glm::dot(normal, -lightDirection), 0.0, 1.0);
+			RayTriangleIntersection lightIntersection = getClosestIntersection(modelTriangles, lightPosition, lightDirection);
+			Colour Background = Colour(0, 0, 0);
+			if (closestIntersection.distanceFromCamera == FLT_MAX) {
+				uint32_t backgroundc = (255 << 24) + (Background.red << 16) + (Background.green << 8) + (Background.blue);
+				window.setPixelColour(x, y, backgroundc);
+				continue;
+			}
+			if (closestIntersection.triangleIndex != lightIntersection.triangleIndex) {
+				red = ((colour.red * (incidenceintensity * intensity + specularintensity) + 35) * 0.3);
+				green = ((colour.green * (incidenceintensity * intensity + specularintensity) + 35) * 0.3);
+				blue = ((colour.blue * (incidenceintensity * intensity + specularintensity) + 35) * 0.3);
+				//red = 0;
+				//green = 0;
+				//blue = 0;
+			}
+			else {
+				//Plus 25 means that the colour is never black and for Ambient Lighting
+				//Colour colour = closestIntersection.intersectedTriangle.colour;
+				colour = closestIntersection.intersectedTriangle.colour;
+				red = fmin(colour.red * (incidenceintensity * intensity + specularintensity) + 35, 255);
+				green = fmin(colour.green * (incidenceintensity * intensity + specularintensity) + 35, 255);
+				blue = fmin(colour.blue * (incidenceintensity * intensity + specularintensity) + 35, 255);
+			}
+			uint32_t c = (255 << 24) + (red << 16) + (green << 8) + (blue);
+			window.setPixelColour(x, y, c);
+		}
+	}
+}
+
 void handleEvent(SDL_Event event, DrawingWindow& window) {
-	auto modelTriangles = objReader("car.obj", "car.mtl", 0.35);
-	//auto modelTriangles = SphereReader("sphere.obj", 0.35);
+	auto modelTriangles = objReader("combined_scene.obj", "cornell-box.mtl", 0.1);
+	auto modelSphere = SphereReader("sphere.obj", 0.35);
+	auto carTriangle = objReader("car.obj", "cornell-box.mtl", 0.35);
+	auto groundTriangle = objReader("ground.obj", "cornell-box.mtl", 0.35);
+	auto cubeTrianlge = objReader("cube.obj", "cornell-box.mtl", 0.35);
+	//for (ModelTriangle triangle : modelSphere) {
+	//	modelTriangles.push_back(triangle);
+	//}
 	float radianx = 0.1;
-	float scale = 0.25;
+	float scale = 0.35;
 	if (event.type == SDL_KEYDOWN) {
 		if (event.key.keysym.sym == SDLK_LEFT) {
 			std::cout << "LEFT" << std::endl;
@@ -526,7 +1131,8 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			Rotation = Rotation * cameraRotation;
 			cameraPosition = cameraRotation * cameraPosition;
 			float focalLength = 2.0;
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 		} 
 		else if (event.key.keysym.sym == SDLK_RIGHT) {
 			std::cout << "RIGHT" << std::endl;
@@ -544,21 +1150,24 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			Rotation = Rotation * cameraRotation;
 			cameraPosition = cameraRotation * cameraPosition;
 			float focalLength = 2.0;
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_UP) {
 			std::cout << "UP" << std::endl;
 			window.clearPixels();
 			clearDepthBuffer();
 			cameraPosition.z -= 0.05;
-			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 		} 
 		else if (event.key.keysym.sym == SDLK_DOWN) {
 			std::cout << "DOWN" << std::endl;
 			window.clearPixels();
 			clearDepthBuffer();
 			cameraPosition.z += 0.05;
-			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_u) {	// Test Week 3 Task 3 draw stroked triangle
 			// Generate three random points for the triangle
@@ -608,31 +1217,40 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			//WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
 
 			// Test Week 4 task 8 rasteried render
-			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, groundTriangle, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, carTriangle, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelSphere, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, cubeTrianlge, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2/3, Colour(255,255,255));
+			//drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
 		}
 		else if (event.key.keysym.sym == SDLK_w) {
 			window.clearPixels();
 			clearDepthBuffer();
 			cameraPosition.y -= 0.05;
-			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_s) {
 			window.clearPixels();
 			clearDepthBuffer();
 			cameraPosition.y += 0.05;
-			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_a) {
 			window.clearPixels();
 			clearDepthBuffer();
 			cameraPosition.x += 0.05;
-			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_d) {
 			window.clearPixels();
 			clearDepthBuffer();
 			cameraPosition.x -= 0.05;
-			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_q) {
 			//left
@@ -643,7 +1261,8 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, sin(radianx), 0, 1, 0, -sin(radianx), 0, cos(radianx));
 			cameraPosition = cameraPosition * cameraRotation;
 			Rotation = Rotation * cameraRotation;
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			//Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
 			//drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
 		}
 		else if (event.key.keysym.sym == SDLK_e) {
@@ -655,7 +1274,7 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, -sin(radianx), 0, 1, 0, sin(radianx), 0, cos(radianx));
 			cameraPosition = cameraPosition * cameraRotation;
 			Rotation = Rotation * cameraRotation;
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 			//drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
 		}
 		else if (event.key.keysym.sym == SDLK_z) {
@@ -667,7 +1286,7 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radiany), sin(radiany), 0, -sin(radiany), cos(radiany));
 			cameraPosition = cameraPosition * cameraRotation;
 			Rotation = Rotation * cameraRotation;
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 			//drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
 		}
 		else if (event.key.keysym.sym == SDLK_x) {
@@ -679,7 +1298,7 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			glm::mat3 cameraRotation = glm::mat3(1, 0, 0, 0, cos(radiany), -sin(radiany), 0, sin(radiany), cos(radiany));
 			cameraPosition = cameraPosition * cameraRotation;
 			Rotation = Rotation * cameraRotation;
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 			//drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
 		}
 		else if (event.key.keysym.sym == SDLK_0) {
@@ -698,7 +1317,7 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			Rotation = Rotation * cameraRotation;
 			cameraPosition = cameraRotation * cameraPosition;
 			float focalLength = 2.0;
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_1) {
 			// turning right
@@ -717,7 +1336,7 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			Rotation = Rotation * cameraRotation;
 			cameraPosition = cameraRotation * cameraPosition;
 			float focalLength = 2.0;
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_2) {
 			// turning left
@@ -736,7 +1355,118 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			Rotation = Rotation * cameraRotation;
 			cameraPosition = cameraRotation * cameraPosition;
 			float focalLength = 2.0;
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_r) {
+			drawRasterisedScene(window, modelTriangles, cameraPosition, focalLength, float(HEIGHT) * 2 / 3);
+		}
+		else if (event.key.keysym.sym == SDLK_g) {
+			drawRasterisedShadowScene(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+		}
+		else if (event.key.keysym.sym == SDLK_y) {
+			drawIncidence(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+		}
+		else if (event.key.keysym.sym == SDLK_m) {
+			drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+		}
+		else if (event.key.keysym.sym == SDLK_3) {
+			window.clearPixels();
+			clearDepthBuffer();
+			shadingfactor = 2;
+			lightposition.x += 0.05;
+			//drawRasterisedShadowScene(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+			//drawGouraud(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			//drawPhong(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+		}
+		else if (event.key.keysym.sym == SDLK_4) {
+			window.clearPixels();
+			clearDepthBuffer();
+			shadingfactor = 2;
+			lightposition.x -= 0.05;
+			//drawRasterisedShadowScene(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+			//drawGouraud(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			//drawPhong(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+		}
+		else if (event.key.keysym.sym == SDLK_5) {
+			window.clearPixels();
+			clearDepthBuffer();
+			shadingfactor = 2;
+			lightposition.y += 0.05;
+			//drawRasterisedShadowScene(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+			//drawGouraud(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			//drawPhong(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+		}
+		else if (event.key.keysym.sym == SDLK_6) {
+			window.clearPixels();
+			clearDepthBuffer();
+			shadingfactor = 2;
+			lightposition.y -= 0.05;
+			//drawRasterisedShadowScene(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+			//drawGouraud(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			//drawPhong(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+		}
+		else if (event.key.keysym.sym == SDLK_7) {
+			window.clearPixels();
+			clearDepthBuffer();
+			shadingfactor = 2;
+			lightposition.z += 0.05;
+			//drawRasterisedShadowScene(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+			//drawGouraud(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			//drawPhong(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+		}
+		else if (event.key.keysym.sym == SDLK_8) {
+			window.clearPixels();
+			clearDepthBuffer();
+			shadingfactor = 2;
+			lightposition.z -= 0.05;
+			//drawRasterisedShadowScene(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+			//drawGouraud(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			//drawPhong(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+		}
+		else if (event.key.keysym.sym == SDLK_n) {
+			window.clearPixels();
+			clearDepthBuffer();
+			//drawGouraud(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			shadingfactor = 2;
+			drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+		}
+		else if (event.key.keysym.sym == SDLK_b) {
+			window.clearPixels();
+			clearDepthBuffer();
+			//drawPhong(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT)*2/3);
+			shadingfactor = 3;
+			drawSpecular(window, modelTriangles, cameraPosition, lightposition, focalLength, float(HEIGHT) * 2 / 3);
+		}
+		else if (event.key.keysym.sym == SDLK_9) {
+			window.clearPixels();
+			clearDepthBuffer();
+			float radianx;
+			radianx += 0.10;
+			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, sin(radianx), 0, 1, 0, -sin(radianx), 0, cos(radianx));
+			Rotation = lookAt(cameraPosition);
+			Rotation = Rotation * cameraRotation;
+			cameraPosition = cameraRotation * cameraPosition;
+			//PointCloud(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
+			//WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+		}
+		else if (event.key.keysym.sym == SDLK_p) {
+			window.clearPixels();
+			clearDepthBuffer();
+			float radianx;
+			radianx -= 0.10;
+			glm::mat3 cameraRotation = glm::mat3(cos(radianx), 0, sin(radianx), 0, 1, 0, -sin(radianx), 0, cos(radianx));
+			Rotation = lookAt(cameraPosition);
+			Rotation = Rotation * cameraRotation;
+			cameraPosition = cameraRotation * cameraPosition;
+			//PointCloud(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT)*2/3, Colour(255, 255, 255));
+			WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_c) {
 			clearDepthBuffer();
@@ -804,8 +1534,8 @@ int main(int argc, char* argv[]) {
 		// Test Week 3 Task 5
 		//textureCanvas(window);
 
-			//	//Orbit
-			//auto modelTriangles = objReader("cornell-box.obj", "cornell-box.mtl", 0.35);
+				//Orbit
+			//auto modelTriangles = objReader("car.obj", "cornell-box.mtl", 0.35);
 			//float radianx = 0.01;
 			//window.clearPixels();
 			//clearDepthBuffer();
