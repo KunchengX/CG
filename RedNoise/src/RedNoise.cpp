@@ -21,7 +21,7 @@
 TODO:
 让汽车的图像与场景图像共存
 解决汽车图像与场景图像一起随着键盘控制变化的问题
-汽车的三张不同图像（直行 左转 右转）
+汽车的三张不同图像（直行 左转 右转
 */
 
 #define WIDTH 960
@@ -29,9 +29,15 @@ TODO:
 
 float depthBuffer[HEIGHT][WIDTH];
 
+// Camera for scenes
 glm::vec3 cameraPosition(0.0, 0.0, 4.0);
 glm::mat3 cameraOrientation(1, 0, 0, 0, 1, 0, 0, 0, 1);
 glm::mat3 Rotation(1, 0, 0, 0, 1, 0, 0, 0, 1);
+
+// Camera for car
+glm::vec3 carCameraPos(0.0, 0.0, 4.0);
+glm::mat3 carCameraOri(1, 0, 0, 0, 1, 0, 0, 0, 1);
+glm::mat3 carRotation(1, 0, 0, 0, 1, 0, 0, 0, 1);
 
 glm::vec3 SpherePoint(0, 0, 0);
 std::vector<glm::vec3> lightpoints;
@@ -1109,13 +1115,18 @@ void drawPhong(DrawingWindow& window, const std::vector<ModelTriangle>& modelTri
 }
 
 void handleEvent(SDL_Event event, DrawingWindow& window) {
-	auto modelTriangles = objReader("Final_Modified_Car.obj", "cornell-box.mtl", 0.5);
+	auto modelTriangles = objReader("combined_scene.obj", "cornell-box.mtl", 0.35);
+	auto carTriangles = objReader("Final_modified_car.obj", "cornell-box.mtl", 0.2);
+	//auto modelTriangles = objReader("Final_Modified_Car.obj", "cornell-box.mtl", 0.5);
 	//auto modelTriangles = objReader("cornell-box.obj", "cornell-box.mtl", 0.35);
 	auto modelSphere = SphereReader("sphere.obj", 0.35);
 	auto carTriangle = objReader("car.obj", "cornell-box.mtl", 0.35);
 	auto groundTriangle = objReader("ground.obj", "cornell-box.mtl", 0.35);
 	auto cubeTrianlge = objReader("cube.obj", "cornell-box.mtl", 0.35);
 	//for (ModelTriangle triangle : modelSphere) {
+	//	modelTriangles.push_back(triangle);
+	//}
+	//for (ModelTriangle triangle : carTriangles) {
 	//	modelTriangles.push_back(triangle);
 	//}
 	float radianx = 0.1;
@@ -1139,7 +1150,8 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			cameraPosition = cameraRotation * cameraPosition;
 			float focalLength = 2.0;
 			//WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			Rasterised(window, carTriangles, carCameraPos, carCameraOri, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 		} 
 		else if (event.key.keysym.sym == SDLK_RIGHT) {
 			std::cout << "RIGHT" << std::endl;
@@ -1158,7 +1170,8 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			cameraPosition = cameraRotation * cameraPosition;
 			float focalLength = 2.0;
 			//WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
-			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, Rotation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			Rasterised(window, carTriangles, carCameraPos, carCameraOri, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_UP) {
 			std::cout << "UP" << std::endl;
@@ -1166,7 +1179,7 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			clearDepthBuffer();
 			cameraPosition.z -= 0.05;
 			//WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
-			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 		} 
 		else if (event.key.keysym.sym == SDLK_DOWN) {
 			std::cout << "DOWN" << std::endl;
@@ -1174,7 +1187,7 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 			clearDepthBuffer();
 			cameraPosition.z += 0.05;
 			//WireFrame(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
-			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 1 / 4, Colour(255, 255, 255));
+			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 		}
 		else if (event.key.keysym.sym == SDLK_u) {	// Test Week 3 Task 3 draw stroked triangle
 			// Generate three random points for the triangle
@@ -1225,6 +1238,7 @@ void handleEvent(SDL_Event event, DrawingWindow& window) {
 
 			// Test Week 4 task 8 rasteried render
 			Rasterised(window, modelTriangles, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
+			Rasterised(window, carTriangles, carCameraPos, carCameraOri, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 			//Rasterised(window, groundTriangle, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 			//Rasterised(window, carTriangle, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
 			//Rasterised(window, modelSphere, cameraPosition, cameraOrientation, focalLength, float(HEIGHT) * 2 / 3, Colour(255, 255, 255));
